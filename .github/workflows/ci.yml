@@ -1,0 +1,65 @@
+name: BioCellAgents CI
+
+on:
+  push:
+    branches: [main, develop]
+  pull_request:
+    branches: [main]
+
+env:
+  PYTHON_VERSION: "3.10"
+
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+      - name: Install linters
+        run: |
+          pip install flake8 mypy
+      - name: Flake8
+        run: |
+          flake8 src/ --max-line-length=120 --extend-ignore=E203,W503
+      - name: Mypy
+        run: |
+          mypy src/ --ignore-missing-imports --no-strict-optional || true
+
+  test:
+    runs-on: ubuntu-latest
+    needs: lint
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+      - name: Install dependencies
+        run: |
+          pip install -r requirements.txt
+          pip install pytest pytest-cov
+      - name: Run tests
+        run: |
+          pytest tests/ -v --tb=short --cov=src --cov-report=xml
+        env:
+          CUDA_VISIBLE_DEVICES: ""
+      - name: Upload coverage
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-report
+          path: coverage.xml
+
+  docker-build:
+    runs-on: ubuntu-latest
+    needs: test
+    if: github.ref == 'refs/heads/main'
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build Docker image
+        run: |
+          docker build -t biocell-agent:${{ github.sha }} .
+      - name: Docker image info
+        run: |
+          docker images biocell-agent

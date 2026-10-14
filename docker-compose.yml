@@ -1,0 +1,74 @@
+version: "3.9"
+
+services:
+  # Streamlit Web Application
+  biocell-app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: biocell-app
+    ports:
+      - "8501:8501"
+    volumes:
+      - ./data:/app/data
+      - ./checkpoints:/app/checkpoints
+      - ./logs:/app/logs
+    environment:
+      - BIOMED_LOG_LEVEL=INFO
+      - CUDA_VISIBLE_DEVICES=0
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - capabilities: [gpu]
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8501/_stcore/health')"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+
+  # Training service (optional, for batch training jobs)
+  biocell-trainer:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: biocell-trainer
+    command: ["python", "main.py", "train", "--task", "segmentation"]
+    volumes:
+      - ./data:/app/data
+      - ./checkpoints:/app/checkpoints
+      - ./logs:/app/logs
+    environment:
+      - BIOMED_LOG_LEVEL=DEBUG
+      - CUDA_VISIBLE_DEVICES=0
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - capabilities: [gpu]
+    restart: "no"
+    profiles: ["training"]
+
+  # Ollama LLM service (for agent-based analysis)
+  ollama:
+    image: ollama/ollama:latest
+    container_name: biocell-ollama
+    ports:
+      - "11434:11434"
+    volumes:
+      - ollama_data:/root/.ollama
+    environment:
+      - OLLAMA_KEEP_ALIVE=30m
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - capabilities: [gpu]
+    restart: unless-stopped
+    profiles: ["agent"]
+
+volumes:
+  ollama_data:
+    driver: local

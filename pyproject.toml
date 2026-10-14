@@ -1,0 +1,106 @@
+[build-system]
+requires = ["setuptools>=68.0", "wheel"]
+build-backend = "setuptools.backends._legacy:_Backend"
+
+[project]
+name = "biocell-agent"
+version = "0.3.0"
+description = "BioCellAgents - AI-powered biomedical cell analysis with multi-agent orchestration"
+readme = "README.md"
+requires-python = ">=3.10"
+license = {text = "MIT"}
+authors = [
+    {name = "BioCellAgents Team"}
+]
+keywords = ["biomedical", "cell-analysis", "segmentation", "classification", "deep-learning", "multi-agent"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Science/Research",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Topic :: Scientific/Engineering :: Bio-Informatics",
+]
+dependencies = [
+    # Deep Learning & Computer Vision
+    "torch>=2.7.0",
+    "torchvision>=0.22.0",
+    "transformers>=4.40.0",
+    "peft>=0.10.0",
+    "opencv-python>=4.8.0",
+    "Pillow>=10.0.0",
+    "scikit-learn>=1.3.0",
+    "cellpose>=4.0.0",
+    # Datasets & Preprocessing
+    "datasets>=2.18.0",
+    "numpy>=1.24.0",
+    "scipy>=1.11.0",
+    # Graph Analytics & Visualization
+    "networkx>=3.0",
+    "matplotlib>=3.7.0",
+    "tqdm>=4.65.0",
+    # Interactive Web Dashboard
+    "streamlit>=1.30.0",
+    "plotly>=5.18.0",
+    "pandas>=2.0.0",
+    "fpdf2>=2.7.0",
+    # Multi-Agent Orchestration & LLM
+    "crewai>=0.100.0",
+    "crewai-tools>=0.10.0",
+    "litellm>=1.30.0",
+    "pydantic>=2.6.0",
+    "python-dotenv>=1.0.0",
+    # Literature Search
+    "requests>=2.28.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=7.4.0",
+    "pytest-cov>=4.1.0",
+    "flake8>=6.1.0",
+    "mypy>=1.5.0",
+    "black>=23.0.0",
+    "isort>=5.12.0",
+]
+tensorboard = [
+    "tensorboard>=2.14.0",
+]
+# Optional head-to-head segmentation benchmark (StarDist + Cellpose baselines).
+# Not required for the core pipeline -- only for scripts/benchmark_segmenters.py.
+segmentation-bench = [
+    "stardist>=0.9.0",
+    "csbdeep>=0.8.0",
+]
+all = [
+    "biocell-agent[dev,tensorboard,segmentation-bench]",
+]
+
+[project.scripts]
+biocell-train = "src.models.train:main"
+biocell-eval = "src.models.evaluate:main"
+biocell-infer = "src.models.inference_pipeline:main"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["src*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+python_files = ["test_*.py"]
+python_classes = ["Test*"]
+python_functions = ["test_*"]
+addopts = "-v --tb=short"
+
+[tool.mypy]
+python_version = "3.10"
+ignore_missing_imports = true
+no_implicit_optional = true
+warn_redundant_casts = true
+
+[tool.black]
+line-length = 100
+target-version = ["py310"]
+
+[tool.isort]
+profile = "black"
+line_length = 100

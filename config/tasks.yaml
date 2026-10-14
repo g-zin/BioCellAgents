@@ -1,0 +1,132 @@
+# ── BIOCELL CREWAI TASKS CONFIGURATION ────────────────────────────────────────
+
+image_parsing_task:
+  description: >
+    You are given PRE-COMPUTED inference results below. Do NOT run any tools or re-execute inference.
+    Simply extract and report the organ classification fields from the provided data.
+
+    PRE-COMPUTED RESULTS (use these EXACT values, do not modify):
+    {precomputed_results}
+
+    From the "organ" section above, report:
+    - predicted_organ, confidence_score, top_3_predictions
+    - calibration_status (temperature, fitted, method)
+    - model_source, ground_truth_organ, resolution, stain_type
+    Quote ALL values verbatim. Do NOT fabricate or alter any number.
+  expected_output: >
+    A JSON-formatted dictionary containing the predicted organ, confidence score, top 3 predictions,
+    calibration_status (with exact temperature and fitted values), model_source, and dataset verification status.
+    All values must be quoted verbatim from the pre-computed results.
+  agent: pathology_cv_analyst
+
+spatial_analysis_task:
+  description: >
+    You are given PRE-COMPUTED inference results below. Do NOT run any tools or re-execute inference.
+    Simply extract and report the cell detection and spatial graph fields from the provided data.
+
+    PRE-COMPUTED RESULTS (use these EXACT values, do not modify):
+    {precomputed_results}
+
+    From the "cells" and "spatial" sections above, report:
+    - total_cell_count, class_counts, composition_percentages
+    - graph_topology (all metrics: nodes, edges, clustering, density, avg distance, etc.)
+    - interaction_matrix (full pairwise counts)
+    - immune_infiltration (mean and min distances)
+    - validity_assessment (is_valid, warnings, recommendations)
+    - detection_source, graph_image_path
+    Quote ALL values verbatim. Do NOT fabricate or alter any number.
+  expected_output: >
+    A JSON-formatted breakdown of cell counts, composition percentages, graph node/edge counts,
+    average neighbor distance, spatial cellular density, pairwise cell-cell interaction matrix dictionary,
+    immune infiltration distance statistics, validity_assessment (with is_valid and warnings),
+    detection_source, and the saved graph image path.
+    All values must be quoted verbatim from the pre-computed results.
+  agent: spatial_bio_analyst
+
+literature_research_task:
+  description: >
+    IMPORTANT: You have NO tools. Do NOT search, do NOT call functions, do NOT fetch data.
+    All literature evidence is ALREADY PROVIDED in the data block below.
+    Your ONLY job is to read the "literature_evidence" section in the data and select papers.
+
+    CLASSIFICATION PROFILE & LITERATURE EVIDENCE (all data is below, nothing to search for):
+    {precomputed_results}
+
+    From the "literature_evidence" section in the data above, select the 3-5
+    most relevant peer-reviewed papers that support the specific findings.
+
+    SELECTION CRITERIA (rank the papers already listed above by):
+    1. Direct relevance to the specific organ + TME phenotype combination
+    2. Recency (prefer 2020-2026)
+    3. Impact (high-impact journals preferred)
+    4. Specificity (papers about the exact phenotype, not just general cancer)
+
+    OUTPUT FORMAT:
+    For each selected paper, provide:
+    - Full Vancouver-style citation with PMID
+    - Key finding from the abstract that supports the classification
+    - Relevance score (High/Medium/Low) with brief justification
+
+    If the "literature_evidence" section is empty, missing, or contains no papers,
+    respond with exactly: "No peer-reviewed literature was provided in the input data.
+    Recommend pre-retrieving relevant papers before running this analysis."
+    Do NOT attempt to search for papers. Do NOT call any tools.
+  expected_output: >
+    A structured list of 3-5 peer-reviewed citations in Vancouver style, each with:
+    - Full citation (Authors. Title. Journal. Year;Vol(Issue):Pages. PMID: XXXXXXX.)
+    - Key supporting finding extracted from the abstract
+    - Relevance assessment (High/Medium/Low)
+    All citations must be directly relevant to the specific organ + TME phenotype profile.
+  agent: literature_researcher
+
+pathology_synthesis_task:
+  description: >
+    Synthesize the findings from image_parsing_task and spatial_analysis_task into an institutional-grade,
+    publication-ready Computational Pathology Report modeled after Owkin Pathology Explorer.
+
+    LITERATURE GROUNDING REQUIREMENTS (MANDATORY):
+    - Use the literature evidence provided in the pre-computed results to find supporting citations for:
+      * TME phenotype classification (Section 4) — cite ≥2 papers
+      * Spatial topology findings (Section 6) — cite ≥1 paper
+      * Translational recommendations (Section 10) — cite ≥1 paper per recommendation
+      * Comparative benchmarks (Section 8) — cite ≥1 paper
+    - If no relevant literature is available in the pre-computed evidence, write: "No indexed literature available for this claim."
+    - ALL citations must appear in Section 11 (References) in Vancouver style with PMID.
+
+    CRITICAL ANTI-HALLUCINATION & RENDERING RULES:
+    - Quote all numeric values (temperature τ, confidence scores, cell counts, distances in px/µm, edge counts,
+      clustering coefficients) EXACTLY as they appear in the task outputs above. Do not round, estimate,
+      or substitute with default values.
+    - If calibration_status shows "fitted": true and "temperature": 1.659, write "τ = 1.659 (Fitted)" — NOT "τ = 1.0".
+    - Do NOT add cell classes or categories that were not present in the provided results. Report ONLY the 5 exact PanNuke classes.
+    - Percentages must match the exact composition_percentages provided in the results.
+    - If a metric is missing from the provided results, write "N/A" — never fabricate a number.
+    - The predicted organ MUST match exactly what was reported in image_parsing_task. Do NOT change it.
+    - The cell counts MUST match exactly what was reported in spatial_analysis_task. Do NOT change them.
+    - TABLE FORMATTING RULE: Every section that reports multiple metrics MUST use a proper Markdown table with a header row and separator row (e.g., | Metric | Value |). NEVER output raw key-value pairs or unparsed text. All numeric values in tables must be rounded to at most 4 decimal places.
+    - DISTANCE UNITS: Report all distances in BOTH pixels and micrometers (μm). Use 0.25 μm/px (standard 40× objective). Example: "41.77 px (10.44 μm)".
+
+    The report MUST adopt a sleek, enterprise Markdown layout with the following 11 sections:
+    1. Document Metadata Header & Executive Analytical Summary (frame strictly as analytical/research findings)
+    2. Primary Organ Identification & Calibrated Confidence (include candidate organ matches table + τ status)
+    3. Cellular Microenvironment & 5-Class Breakdown (formatted as a clean Markdown table with counts & percentages)
+    4. Tumor Microenvironment (TME) Architecture & Immune Infiltration (Infiltrated/Excluded/Desert phenotype classification + exact mean/min distances)
+       — MUST include ≥2 literature citations supporting the phenotype classification
+    5. Pairwise Cell-Cell Interaction Matrix (formatted as a clean 2-column or grid Markdown table with edge counts)
+    6. Spatial Proximity Graph & Topology Analysis (V, E, clustering coefficient, density, avg distance, and image path)
+       — MUST include ≥1 literature citation on spatial topology
+    7. Statistical Validity & Sample Quality Audit (evaluate against min_total_cells threshold from validity_assessment)
+    8. Confidence Calibration & Temperature Status (report raw vs. calibrated metrics and ECE status)
+       — MUST include ≥1 literature citation on calibration methodology
+    9. Limitations, Artifacts & Domain Shift Risk (patch-level bounds, single-fold limits, scanner/stain shift risk)
+    10. Translational Research & Next Action Protocol (recommended follow-up assays, spatial transcriptomics, or panel staining)
+        — MUST include ≥1 literature citation per recommendation
+    11. References (Vancouver style: Author(s). Title. Journal. Year;Vol(Issue):Pages. PMID: XXXXXXX.)
+        — List ALL papers cited anywhere in the report, numbered sequentially
+  expected_output: >
+    A comprehensive, publication-grade Markdown computational pathology report strictly adhering to the 11-section structure.
+    All language must be analytical/research-oriented (RUO), NOT diagnostic.
+    ALL numeric values must be quoted verbatim from the task outputs without estimation or hallucination.
+    The predicted organ and cell counts MUST match the upstream task outputs exactly.
+    Section 11 MUST contain a complete reference list in Vancouver style with PMIDs.
+  agent: clinical_report_writer
