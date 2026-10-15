@@ -2,6 +2,10 @@
 __pycache__/
 *.pyc
 *.pyo
+# Exception: the restored "yesterday" app is shipped as compiled bytecode
+# (its original .py source was lost from disk). Track it explicitly so the
+# working app can never be lost again.
+!biocell_app.pyc
 *.egg-info/
 dist/
 build/
