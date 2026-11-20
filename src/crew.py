@@ -1,3 +1,4 @@
+import asyncio
 import logging
 import os
 import time
@@ -23,19 +24,54 @@ ANTI_TOOL_CALL_PROMPT = (
 )
 
 
-def _strip_cache_breakpoint(messages: list[dict]) -> list[dict]:
-    return [{k: v for k, v in msg.items() if k != CACHE_BREAKPOINT_KEY} for msg in messages]
+def _strip_cache_breakpoint_from_item(item: Any) -> Any:
+    if isinstance(item, dict):
+        cleaned: Dict[str, Any] = {}
+        for k, v in item.items():
+            if k == CACHE_BREAKPOINT_KEY:
+                continue
+            if k == "content" and isinstance(v, list):
+                cleaned[k] = [_strip_cache_breakpoint_from_item(sub) for sub in v]
+            else:
+                cleaned[k] = v
+        return cleaned
+    return item
 
 
-def _inject_anti_tool_call_prompt(messages: list[dict]) -> list[dict]:
-    for msg in messages:
-        if msg.get("role") == "system":
+def _strip_cache_breakpoint(messages: Optional[list[Any]]) -> list[Any]:
+    if not messages:
+        return []
+    return [_strip_cache_breakpoint_from_item(msg) for msg in messages]
+
+
+def _inject_anti_tool_call_prompt(messages: Optional[list[Any]]) -> list[Any]:
+    if not messages:
+        return [{"role": "system", "content": ANTI_TOOL_CALL_PROMPT}]
+
+    new_messages = [dict(msg) if isinstance(msg, dict) else msg for msg in messages]
+    for msg in new_messages:
+        if isinstance(msg, dict) and msg.get("role") == "system":
             existing = msg.get("content", "")
-            if isinstance(existing, str) and ANTI_TOOL_CALL_PROMPT not in existing:
-                msg["content"] = existing + "\n\n" + ANTI_TOOL_CALL_PROMPT
-            return messages
-    messages.insert(0, {"role": "system", "content": ANTI_TOOL_CALL_PROMPT})
-    return messages
+            if isinstance(existing, str):
+                if ANTI_TOOL_CALL_PROMPT not in existing:
+                    msg["content"] = existing + "\n\n" + ANTI_TOOL_CALL_PROMPT
+                return new_messages
+            if isinstance(existing, list):
+                already_present = any(
+                    (isinstance(part, dict) and ANTI_TOOL_CALL_PROMPT in str(part.get("text", "")))
+                    or (isinstance(part, str) and ANTI_TOOL_CALL_PROMPT in part)
+                    for part in existing
+                )
+                if not already_present:
+                    msg["content"] = list(existing) + [
+                        {"type": "text", "text": f"\n\n{ANTI_TOOL_CALL_PROMPT}"}
+                    ]
+                return new_messages
+            msg["content"] = ANTI_TOOL_CALL_PROMPT
+            return new_messages
+
+    new_messages.insert(0, {"role": "system", "content": ANTI_TOOL_CALL_PROMPT})
+    return new_messages
 
 
 class GroqCompatibleLLM(LLM):
@@ -206,36 +242,62 @@ class GroqCompatibleLLM(LLM):
         from_agent=None,
         response_model=None,
     ):
-        """Async version of call() with the same fallback logic."""
-        try:
-            return await super().acall(
-                messages=messages,
-                tools=tools,
-                callbacks=callbacks,
-                available_functions=available_functions,
-                from_task=from_task,
-                from_agent=from_agent,
-                response_model=response_model,
-            )
-        except Exception as e:
-            error_str = str(e)
-            is_tool_call_error = (
-                "tool_use_failed" in error_str
-                or "Tool choice is none" in error_str
-                or "model called a tool" in error_str
-            )
-            if not is_tool_call_error:
+        """Async version of call() with rate-limit retry + tool-call hallucination fallback."""
+        max_retries = 3
+        last_error: Optional[Exception] = None
+        for attempt in range(max_retries):
+            try:
+                result = await super().acall(
+                    messages=messages,
+                    tools=tools,
+                    callbacks=callbacks,
+                    available_functions=available_functions,
+                    from_task=from_task,
+                    from_agent=from_agent,
+                    response_model=response_model,
+                )
+                logger.info("GroqCompatibleLLM.acall() succeeded")
+                return result
+            except Exception as e:
+                error_str = str(e)
+                logger.error(
+                    "GroqCompatibleLLM.acall() failed (attempt %d/%d): %s",
+                    attempt + 1,
+                    max_retries,
+                    error_str[:500],
+                )
+                if (
+                    "RateLimitError" in error_str
+                    or "rate_limit" in error_str.lower()
+                    or "rate limit" in error_str.lower()
+                ):
+                    wait_time = (attempt + 1) * 12  # 12s, 24s, 36s
+                    logger.warning("Rate limit hit in acall(). Retrying in %ds...", wait_time)
+                    await asyncio.sleep(wait_time)
+                    last_error = e
+                    continue
+                is_tool_call_error = (
+                    "tool_use_failed" in error_str
+                    or "Tool choice is none" in error_str
+                    or "model called a tool" in error_str
+                )
+                if is_tool_call_error:
+                    logger.warning(
+                        "Tool-call hallucination detected in acall(). Returning fallback."
+                    )
+                    return (
+                        "I am unable to perform external searches or tool calls as I have "
+                        "no tools available. Based on the information provided in the prompt, "
+                        "I cannot retrieve additional data. Please ensure all required data "
+                        "(including literature evidence, pre-computed results, and reference "
+                        "materials) is provided directly in the input for me to analyze and "
+                        "report on. If literature evidence was expected, it appears to be "
+                        "missing or empty in the provided data."
+                    )
                 raise
-            logger.warning("Tool-call hallucination detected in acall(). Returning fallback.")
-            return (
-                "I am unable to perform external searches or tool calls as I have "
-                "no tools available. Based on the information provided in the prompt, "
-                "I cannot retrieve additional data. Please ensure all required data "
-                "(including literature evidence, pre-computed results, and reference "
-                "materials) is provided directly in the input for me to analyze and "
-                "report on. If literature evidence was expected, it appears to be "
-                "missing or empty in the provided data."
-            )
+        if last_error is not None:
+            raise last_error
+        raise RuntimeError("GroqCompatibleLLM.acall() exhausted retries without captured exception")
 
 
 def create_llm(model_name: Optional[str] = None) -> LLM:

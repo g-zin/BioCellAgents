@@ -80,10 +80,12 @@ def _resolve_raw_dir(metadata_path: Union[str, Path]) -> Path:
 def _to_uint8_rgb(arr: np.ndarray) -> np.ndarray:
     """Convert an image array to uint8 HxWx3."""
     if arr.dtype != np.uint8:
-        if arr.max() <= 1.0:
+        if arr.size > 0 and arr.max() <= 1.0:
             arr = (arr * 255.0).astype(np.uint8)
         else:
             arr = arr.astype(np.uint8)
+    if arr.ndim == 3 and arr.shape[2] == 1:
+        arr = np.squeeze(arr, axis=2)
     if arr.ndim == 2:
         arr = np.stack([arr] * 3, axis=-1)
     return arr
@@ -140,7 +142,12 @@ class PanNukeCellPatchDataset(Dataset):
         row = self.data.iloc[idx]
         image_path = Path(str(row["crop_path"]))
         if not image_path.is_absolute():
-            image_path = (self.metadata_path.parent.parent.parent / image_path).resolve()
+            candidates = [
+                (self.metadata_path.parent / image_path).resolve(),
+                (self.metadata_path.parent.parent / image_path).resolve(),
+                (self.metadata_path.parent.parent.parent / image_path).resolve(),
+            ]
+            image_path = next((p for p in candidates if p.exists()), candidates[-1])
 
         class_id = int(row["class_id"])
         image = Image.open(image_path).convert("RGB")
@@ -177,6 +184,10 @@ class PanNukeSegmentationDataset(Dataset):
                 raise FileNotFoundError(f"Missing images.npy or masks.npy in {fold_dir.resolve()}")
             imgs = np.load(img_path, mmap_mode="r")
             msks = np.load(mask_path, mmap_mode="r")
+            if len(imgs) != len(msks):
+                raise ValueError(
+                    f"Length mismatch in {fold_dir}: images ({len(imgs)}) != masks ({len(msks)})"
+                )
             fold_idx = len(self._images)
             self._images.append(imgs)
             self._masks.append(msks)
@@ -259,6 +270,10 @@ class PanNukeOrganDataset(Dataset):
                 )
             imgs = np.load(img_path, mmap_mode="r")
             tissues = np.load(tissue_path, allow_pickle=True)
+            if len(imgs) != len(tissues):
+                raise ValueError(
+                    f"Length mismatch in {fold_dir}: images ({len(imgs)}) != tissues ({len(tissues)})"
+                )
             fold_idx = len(self._images)
             self._images.append(imgs)
             for patch_idx in range(len(imgs)):

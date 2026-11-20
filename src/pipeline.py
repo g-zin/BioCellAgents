@@ -15,6 +15,7 @@ import numpy as np
 import torch
 
 from src.data.dataset import ORGAN_TYPES
+from src.data.transforms import clean_organ_label
 from src.inference.calibration import TemperatureScaler
 from src.inference.validity_gate import ValidityGate
 from src.models.cell_detector import TrainedCellDetector
@@ -76,15 +77,17 @@ def load_patch(fold_dir: str, patch_index: int) -> Tuple[np.ndarray, str]:
         raise FileNotFoundError(f"images.npy not found in {fold_dir}")
     images = np.load(images_path, mmap_mode="r")
     n_patches = len(images)
-    if patch_index >= n_patches:
-        patch_index = 0
+    if n_patches == 0:
+        raise ValueError(f"images.npy is empty in {fold_dir}")
+    patch_index = max(0, min(int(patch_index), n_patches - 1))
     raw_img = np.array(images[patch_index])
-    if raw_img.max() <= 1.0:
-        raw_img = (raw_img * 255).astype(np.uint8)
-    else:
-        raw_img = raw_img.astype(np.uint8)
+    if raw_img.dtype != np.uint8:
+        if raw_img.size > 0 and raw_img.max() <= 1.0:
+            raw_img = np.clip(raw_img * 255.0, 0, 255).astype(np.uint8)
+        else:
+            raw_img = np.clip(raw_img, 0, 255).astype(np.uint8)
     tissue = (
-        str(np.load(tissues_path, allow_pickle=True)[patch_index])
+        clean_organ_label(np.load(tissues_path, allow_pickle=True)[patch_index])
         if tissues_path.exists()
         else "Unknown"
     )

@@ -1,24 +1,17 @@
 import argparse
 from pathlib import Path
 
-import litellm
-import litellm.main
 from dotenv import load_dotenv
 
-from src.crew import PathologyCrew
-from src.pipeline import build_precomputed_results
-
-# Set global LiteLLM parameters before execution
-litellm.drop_params = True
-litellm.cache = None
+# Load environment variables (.env)
+load_dotenv()
 
 
 # --- CrewAI <-> Groq compatibility shim ------------------------------------
 # CrewAI marks stable prompt prefixes with a `cache_breakpoint` flag (an
 # OpenAI prompt-caching feature). Groq rejects this property, and litellm's
 # drop_params does not strip message-level properties, so we remove it from
-# every message before it reaches the provider. This must be installed before
-# the crew makes any LLM call.
+# every message before it reaches the provider.
 def _strip_cache_breakpoint(messages):
     if not messages:
         return messages
@@ -30,29 +23,36 @@ def _strip_cache_breakpoint(messages):
     return cleaned
 
 
-_orig_completion = litellm.main.completion
+def _configure_litellm() -> None:
+    import litellm
+    import litellm.main
 
+    litellm.drop_params = True
+    litellm.cache = None
 
-def _patched_completion(*args, **kwargs):
-    if "messages" in kwargs:
-        kwargs["messages"] = _strip_cache_breakpoint(kwargs["messages"])
-    elif args and isinstance(args[0], list):
-        args = (_strip_cache_breakpoint(args[0]),) + args[1:]
-    return _orig_completion(*args, **kwargs)
+    if getattr(litellm.main.completion, "_biocell_patched", False):
+        return
 
+    _orig_completion = litellm.main.completion
 
-# Patch both the module attribute (what crewai accesses via `litellm.completion`)
-# and the source function, so the shim is picked up regardless of resolution path.
-litellm.main.completion = _patched_completion
-litellm.completion = _patched_completion
-# ---------------------------------------------------------------------------
+    def _patched_completion(*args, **kwargs):
+        if "messages" in kwargs:
+            kwargs["messages"] = _strip_cache_breakpoint(kwargs["messages"])
+        elif args and isinstance(args[0], list):
+            args = (_strip_cache_breakpoint(args[0]),) + args[1:]
+        return _orig_completion(*args, **kwargs)
 
-# Load environment variables (.env)
-load_dotenv()
+    setattr(_patched_completion, "_biocell_patched", True)
+    litellm.main.completion = _patched_completion
+    litellm.completion = _patched_completion
 
 
 def run_pipeline(fold_dir: str = "data/raw/fold1", patch_index: int = 0):
     """Triggers the multi-agent pathology analysis pipeline for a specified tissue patch."""
+    _configure_litellm()
+    from src.crew import PathologyCrew
+    from src.pipeline import build_precomputed_results
+
     print("Initializing BioCellAgents Multi-Agent Execution Engine...")
     print(f"   - Target Fold Directory : {fold_dir}")
     print(f"   - Target Patch Index   : {patch_index}")

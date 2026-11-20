@@ -50,9 +50,18 @@ class HyperparameterTuner:
         self.max_trials = max_trials
         self.random_seed = random_seed
         self.results: List[TuningResult] = []
+        self._maximize: bool = True
 
     def _generate_combinations(self) -> List[Dict[str, Any]]:
         """Generate parameter combinations based on strategy."""
+        if self.max_trials <= 0:
+            raise ValueError(f"max_trials must be > 0, got {self.max_trials}")
+        if not self.param_grid:
+            raise ValueError("param_grid must not be empty")
+        empty_keys = [k for k, v in self.param_grid.items() if not v]
+        if empty_keys:
+            raise ValueError(f"Parameter value lists must not be empty: {empty_keys}")
+
         keys = list(self.param_grid.keys())
         values = [self.param_grid[k] for k in keys]
 
@@ -87,6 +96,7 @@ class HyperparameterTuner:
         Returns:
             Best TuningResult.
         """
+        self._maximize = maximize
         combinations = self._generate_combinations()
         total = min(len(combinations), self.max_trials)
         if verbose:
@@ -151,7 +161,6 @@ class HyperparameterTuner:
 
     def get_top_n(self, n: int = 5) -> List[TuningResult]:
         """Get top N results sorted by score."""
-        maximize = any(r.score > 0 for r in self.results)
-        if maximize:
+        if self._maximize:
             return sorted(self.results, key=lambda r: r.score, reverse=True)[:n]
         return sorted(self.results, key=lambda r: r.score)[:n]

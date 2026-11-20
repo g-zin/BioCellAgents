@@ -8,6 +8,7 @@ from pydantic import BaseModel, Field
 from torchvision import transforms
 
 from src.data.dataset import ORGAN_TYPES
+from src.data.transforms import clean_organ_label
 from src.inference.calibration import TemperatureScaler
 from src.models.organ_classifier import OrganClassifier
 
@@ -51,7 +52,7 @@ class PanNukeParserTool(BaseTool):
             }
 
         raw_img = images[patch_index]
-        ground_truth_tissue = str(tissues[patch_index])
+        ground_truth_tissue = clean_organ_label(tissues[patch_index])
 
         # Standardize image array to uint8 (256, 256, 3)
         if raw_img.dtype != np.uint8:

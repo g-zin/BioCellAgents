@@ -57,7 +57,9 @@ def evaluate_classification(
 
     labels_list = list(range(len(class_names)))
     acc = accuracy_score(all_targets, all_preds)
-    macro_f1 = f1_score(all_targets, all_preds, average="macro", zero_division=0)
+    macro_f1 = f1_score(
+        all_targets, all_preds, labels=labels_list, average="macro", zero_division=0
+    )
     precision, recall, f1, _ = precision_recall_fscore_support(
         all_targets, all_preds, labels=labels_list, zero_division=0
     )

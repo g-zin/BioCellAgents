@@ -159,3 +159,70 @@ class TestCrewHelpers:
         crew_obj = PathologyCrew(llm=mock_llm).crew()
         assert len(crew_obj.agents) == 4
         assert len(crew_obj.tasks) == 4
+
+    def test_strip_cache_breakpoint_edge_cases_and_nested_content(self):
+        assert _strip_cache_breakpoint(None) == []
+        assert _strip_cache_breakpoint([]) == []
+
+        nested = [
+            "plain_string",
+            {
+                "role": "user",
+                "content": [
+                    {"type": "text", "text": "hello", CACHE_BREAKPOINT_KEY: True},
+                    {"type": "text", "text": "world"},
+                ],
+                CACHE_BREAKPOINT_KEY: True,
+            },
+        ]
+        cleaned = _strip_cache_breakpoint(nested)
+        assert cleaned[0] == "plain_string"
+        assert CACHE_BREAKPOINT_KEY not in cleaned[1]
+        assert CACHE_BREAKPOINT_KEY not in cleaned[1]["content"][0]
+        assert cleaned[1]["content"][0] == {"type": "text", "text": "hello"}
+        # Original input dict is not mutated
+        assert CACHE_BREAKPOINT_KEY in nested[1]
+        assert CACHE_BREAKPOINT_KEY in nested[1]["content"][0]
+
+    def test_inject_anti_tool_call_prompt_list_content_and_non_mutating(self):
+        original = [{"role": "system", "content": [{"type": "text", "text": "Sys"}]}]
+        out1 = _inject_anti_tool_call_prompt(original)
+        assert len(original[0]["content"]) == 1  # caller list/dict not mutated
+        assert len(out1[0]["content"]) == 2
+        assert ANTI_TOOL_CALL_PROMPT in out1[0]["content"][1]["text"]
+
+        out2 = _inject_anti_tool_call_prompt(out1)
+        assert len(out2[0]["content"]) == 2  # idempotent for list content
+
+    def test_groq_compatible_llm_acall_rate_limit_retry_and_exhaustion(self, monkeypatch):
+        sleep_calls = []
+
+        async def _fake_sleep(seconds):
+            sleep_calls.append(seconds)
+
+        monkeypatch.setattr("src.crew.asyncio.sleep", _fake_sleep)
+
+        attempts = {"n": 0}
+
+        async def _flaky_acall(self, *args, **kwargs):
+            attempts["n"] += 1
+            if attempts["n"] < 3:
+                raise RuntimeError("RateLimitError: 429")
+            return "async_ok"
+
+        monkeypatch.setattr(LLM, "acall", _flaky_acall)
+        llm = GroqCompatibleLLM(model="groq/qwen/qwen3.8-27b", api_key="test-key")
+        assert asyncio.run(llm.acall([{"role": "user", "content": "hi"}])) == "async_ok"
+        assert sleep_calls == [12, 24]
+
+        sleep_calls.clear()
+
+        async def _always_rate_limit(self, *args, **kwargs):
+            raise RuntimeError("rate limit exceeded")
+
+        monkeypatch.setattr(LLM, "acall", _always_rate_limit)
+        with pytest.raises(RuntimeError, match="rate limit"):
+            asyncio.run(llm.acall([{"role": "user", "content": "hi"}]))
+        assert len(sleep_calls) >= 3
+        assert sleep_calls[:3] == [12, 24, 36]
+        assert all(sleep_calls[i : i + 3] == [12, 24, 36] for i in range(0, len(sleep_calls), 3))

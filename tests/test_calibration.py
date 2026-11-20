@@ -141,3 +141,42 @@ class TestTemperatureScaler:
         missing = TemperatureScaler.load(tmp_path / "missing.json")
         assert missing.temperature == 2.0
         assert missing.fitted is False
+
+    def test_invalid_temperature_and_empty_fit_raise_value_error(self):
+        with pytest.raises(ValueError, match="positive finite"):
+            TemperatureScaler(default_temperature=0.0)
+        with pytest.raises(ValueError, match="positive finite"):
+            TemperatureScaler(default_temperature=-1.5)
+
+        scaler = TemperatureScaler()
+        scaler.temperature = 0.0
+        with pytest.raises(ValueError, match="positive finite"):
+            scaler.calibrate(torch.tensor([[1.0, 2.0]]))
+        with pytest.raises(ValueError, match="positive finite"):
+            scaler.calibrate_probabilities(torch.tensor([[0.6, 0.4]]))
+
+        with pytest.raises(ValueError, match="empty"):
+            TemperatureScaler().fit(torch.empty(0, 5), torch.empty(0, dtype=torch.long))
+
+    @pytest.mark.parametrize(
+        "payload",
+        [
+            "{not valid json",
+            "",
+            "[1, 2, 3]",
+            '{"temperature": null, "fitted": true}',
+            '{"temperature": 0.0, "fitted": true}',
+            '{"temperature": -2.0, "fitted": true}',
+            '{"temperature": "abc", "fitted": true}',
+        ],
+    )
+    def test_load_malformed_or_invalid_json_falls_back_cleanly(self, tmp_path, payload):
+        bad_file = tmp_path / "bad_cal.json"
+        bad_file.write_text(payload, encoding="utf-8")
+
+        loaded = TemperatureScaler.load(bad_file)
+        assert loaded.temperature == pytest.approx(2.0)
+        assert loaded.fitted is False
+        assert "default" in repr(loaded)
+        probs = loaded.calibrate(torch.tensor([[2.0, 1.0]]))
+        assert torch.isclose(probs.sum(), torch.tensor(1.0), atol=1e-5)

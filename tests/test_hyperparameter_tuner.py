@@ -61,3 +61,22 @@ class TestHyperparameterTuner:
         tuner = HyperparameterTuner(param_grid={"lr": [1e-3]}, search_strategy="bayes")
         with pytest.raises(ValueError, match="Unknown strategy"):
             tuner.run(lambda p: {"val_dice": 1.0}, verbose=False)
+
+    def test_minimize_positive_metric_and_get_top_n_order(self):
+        tuner = HyperparameterTuner(param_grid={"lr": [0.1, 0.5, 0.9]}, search_strategy="grid")
+        best = tuner.run(
+            lambda p: {"val_loss": p["lr"]}, metric="val_loss", maximize=False, verbose=False
+        )
+        assert best.score == pytest.approx(0.1)
+        top3 = tuner.get_top_n(3)
+        assert [r.score for r in top3] == pytest.approx([0.1, 0.5, 0.9])
+        assert tuner.get_top_n(1)[0].score == pytest.approx(0.1)
+
+    def test_invalid_max_trials_and_empty_param_lists_raise(self):
+        tuner_zero = HyperparameterTuner(param_grid={"lr": [0.1]}, max_trials=0)
+        with pytest.raises(ValueError, match="max_trials"):
+            tuner_zero.run(lambda p: {"val_dice": 1.0}, verbose=False)
+
+        tuner_empty_vals = HyperparameterTuner(param_grid={"lr": []}, search_strategy="random")
+        with pytest.raises(ValueError, match="must not be empty"):
+            tuner_empty_vals.run(lambda p: {"val_dice": 1.0}, verbose=False)

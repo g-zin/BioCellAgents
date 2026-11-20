@@ -59,6 +59,7 @@ class TestEvaluator:
 
         res = evaluate_classification(model, loader, torch.device("cpu"), ["A", "B", "C"])
         assert res["accuracy"] == 1.0
+        assert res["macro_f1"] == pytest.approx(2.0 / 3.0, abs=1e-4)
         assert res["per_class"]["C"]["support"] == 0
         assert len(res["confusion_matrix"]) == 3
         assert all(len(row) == 3 for row in res["confusion_matrix"])

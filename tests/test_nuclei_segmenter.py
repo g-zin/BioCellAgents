@@ -51,3 +51,18 @@ class TestNucleiSegmenter:
         crops = seg.get_all_cell_crops(img, parsed["centroids"], crop_size=32)
         assert len(crops) == 2
         assert all(c["crop"].shape == (32, 32, 3) for c in crops)
+
+    def test_segment_from_mask_rejects_under_5_channel_3d_and_odd_crop_size(self):
+        import pytest
+
+        seg = NucleiSegmenter(use_stardist_fallback=False)
+        with pytest.raises(ValueError, match="at least 5 channels"):
+            seg.segment_from_mask(np.zeros((64, 64, 3), dtype=np.int32))
+
+        img = np.random.randint(0, 255, (64, 64, 3), dtype=np.uint8)
+        odd_crop = seg.get_cell_crop({"y": 30, "x": 30}, img, crop_size=49)
+        assert odd_crop.shape == (49, 49, 3)
+
+        oob_crop = seg.get_cell_crop({"y": 200, "x": 200}, img, crop_size=49)
+        assert oob_crop.shape == (49, 49, 3)
+        assert np.all(oob_crop == 0)

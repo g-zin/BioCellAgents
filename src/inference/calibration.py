@@ -49,9 +49,23 @@ class TemperatureScaler:
         A value of 2.0 is conservative and prevents overconfident scores.
     """
 
+    @staticmethod
+    def _validate_positive_temperature(value: Any, name: str = "temperature") -> float:
+        if (
+            isinstance(value, bool)
+            or not isinstance(value, (int, float))
+            or not math.isfinite(value)
+            or value <= 0
+        ):
+            raise ValueError(f"{name} must be a positive finite number, got {value!r}")
+        return float(value)
+
     def __init__(self, default_temperature: float = 2.0):
-        self.default_temperature = default_temperature
-        self.temperature: float = default_temperature
+        validated = self._validate_positive_temperature(
+            default_temperature, name="default_temperature"
+        )
+        self.default_temperature: float = validated
+        self.temperature: float = validated
         self.fitted: bool = False
         self.n_samples: int = 0
         self.best_nll: float | None = None
@@ -86,6 +100,13 @@ class TemperatureScaler:
         """
         logits = logits.detach().float()
         labels = labels.long()
+
+        if logits.numel() == 0 or logits.shape[0] == 0 or labels.numel() == 0:
+            raise ValueError("Cannot fit TemperatureScaler on empty logits/labels.")
+        if logits.shape[0] != labels.shape[0]:
+            raise ValueError(
+                f"logits and labels sample count mismatch: {logits.shape[0]} vs {labels.shape[0]}"
+            )
 
         # Initialize T near 1.0 (log-parameterization for positivity)
         log_t = torch.tensor(0.0, requires_grad=True)
@@ -178,7 +199,8 @@ class TemperatureScaler:
         torch.Tensor
             Calibrated probabilities, same shape as input.
         """
-        scaled = logits / self.temperature
+        temp = self._validate_positive_temperature(self.temperature, name="temperature")
+        scaled = logits / temp
         return F.softmax(scaled, dim=-1)
 
     def calibrate_probabilities(self, probs: torch.Tensor) -> torch.Tensor:
@@ -196,10 +218,11 @@ class TemperatureScaler:
         torch.Tensor
             Calibrated probabilities, same shape as input.
         """
+        temp = self._validate_positive_temperature(self.temperature, name="temperature")
         # Clip to avoid log(0)
         probs_clipped = probs.clamp(min=1e-8)
         log_probs = torch.log(probs_clipped)
-        return F.softmax(log_probs / self.temperature, dim=-1)
+        return F.softmax(log_probs / temp, dim=-1)
 
     # ------------------------------------------------------------------
     # Persistence
@@ -227,13 +250,43 @@ class TemperatureScaler:
         path = Path(path)
         if not path.exists():
             return cls()  # Return default (unfitted) scaler
-        with open(path, "r", encoding="utf-8") as f:
-            data = json.load(f)
-        scaler = cls(default_temperature=data.get("default_temperature", 2.0))
-        scaler.temperature = data.get("temperature", scaler.default_temperature)
-        scaler.fitted = data.get("fitted", False)
-        scaler.n_samples = data.get("n_samples", 0)
-        scaler.best_nll = data.get("best_nll")
+        try:
+            with open(path, "r", encoding="utf-8") as f:
+                data = json.load(f)
+        except (json.JSONDecodeError, OSError):
+            return cls()
+
+        if not isinstance(data, dict):
+            return cls()
+
+        raw_default = data.get("default_temperature", 2.0)
+        try:
+            default_temp = cls._validate_positive_temperature(
+                raw_default, name="default_temperature"
+            )
+        except ValueError:
+            default_temp = 2.0
+
+        scaler = cls(default_temperature=default_temp)
+        try:
+            temp = cls._validate_positive_temperature(data.get("temperature"), name="temperature")
+        except ValueError:
+            return scaler
+
+        scaler.temperature = temp
+        scaler.fitted = bool(data.get("fitted", False))
+        raw_n = data.get("n_samples", 0)
+        scaler.n_samples = (
+            int(raw_n) if isinstance(raw_n, (int, float)) and not isinstance(raw_n, bool) else 0
+        )
+        raw_nll = data.get("best_nll")
+        scaler.best_nll = (
+            float(raw_nll)
+            if isinstance(raw_nll, (int, float))
+            and not isinstance(raw_nll, bool)
+            and math.isfinite(raw_nll)
+            else None
+        )
         return scaler
 
     def __repr__(self) -> str:

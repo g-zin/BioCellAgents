@@ -164,9 +164,21 @@ class ValidityGate:
         lines.append(f"- Total cells detected: {n_cells}")
         lines.append(f"- Minimum threshold: {self.min_total_cells}")
         if assessment["is_valid"]:
-            lines.append("- Status: PASS - cell count meets minimum threshold")
+            lines.append(
+                "- Status: PASS - cell count and class distribution meet minimum thresholds"
+            )
         else:
-            lines.append("- Status: FAIL - cell count below minimum threshold")
+            total_failed = n_cells < self.min_total_cells
+            class_check = assessment.get("class_distribution_check")
+            class_failed = class_check is not None and not class_check["is_valid"]
+            if total_failed and class_failed:
+                lines.append(
+                    "- Status: FAIL - cell count and per-class distribution below minimum thresholds"
+                )
+            elif total_failed:
+                lines.append("- Status: FAIL - cell count below minimum threshold")
+            else:
+                lines.append("- Status: FAIL - per-class cell count below minimum threshold")
             for w in assessment["warnings"]:
                 lines.append(f"  - WARNING: {w}")
             for r in assessment["recommendations"]:

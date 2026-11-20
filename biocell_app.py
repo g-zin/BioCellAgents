@@ -25,6 +25,7 @@ if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
 from src.data.dataset import CELL_TYPES, ORGAN_TYPES  # noqa: E402
+from src.data.transforms import clean_organ_label  # noqa: E402
 from src.inference.calibration import TemperatureScaler  # noqa: E402
 from src.inference.validity_gate import ValidityGate  # noqa: E402
 from src.models.cell_detector import TrainedCellDetector  # noqa: E402
@@ -146,15 +147,17 @@ def load_patch_data(
 
     images = np.load(images_path, mmap_mode="r")
     n_patches = len(images)
-    if patch_index >= n_patches:
-        patch_index = 0
+    if n_patches == 0:
+        return None, None, 0
+    patch_index = max(0, min(int(patch_index), n_patches - 1))
     raw_img = np.array(images[patch_index])
-    if raw_img.max() <= 1.0:
-        raw_img = (raw_img * 255).astype(np.uint8)
-    else:
-        raw_img = raw_img.astype(np.uint8)
+    if raw_img.dtype != np.uint8:
+        if raw_img.size > 0 and raw_img.max() <= 1.0:
+            raw_img = np.clip(raw_img * 255.0, 0, 255).astype(np.uint8)
+        else:
+            raw_img = np.clip(raw_img, 0, 255).astype(np.uint8)
     tissue = (
-        str(np.load(tissues_path, allow_pickle=True)[patch_index])
+        clean_organ_label(np.load(tissues_path, allow_pickle=True)[patch_index])
         if tissues_path.exists()
         else "Unknown"
     )
@@ -248,35 +251,37 @@ def run_crewai_pipeline(
             cleaned.append(m)
         return cleaned
 
-    _orig = litellm.main.completion
+    if not getattr(litellm.main.completion, "_biocell_patched", False):
+        _orig = litellm.main.completion
 
-    def _patched(*args: Any, **kwargs: Any) -> Any:
-        if "messages" in kwargs:
-            kwargs["messages"] = _strip_cache_breakpoint(kwargs["messages"])
-        elif args and isinstance(args[0], list):
-            args = (_strip_cache_breakpoint(args[0]),) + args[1:]
+        def _patched(*args: Any, **kwargs: Any) -> Any:
+            if "messages" in kwargs:
+                kwargs["messages"] = _strip_cache_breakpoint(kwargs["messages"])
+            elif args and isinstance(args[0], list):
+                args = (_strip_cache_breakpoint(args[0]),) + args[1:]
 
-        max_retries = 3
-        for attempt in range(max_retries):
-            try:
-                return _orig(*args, **kwargs)
-            except Exception as e:
-                if (
-                    "rate_limit" in str(type(e).__name__).lower()
-                    or "rate limit" in str(e).lower()
-                    or "RateLimit" in str(type(e).__name__)
-                ):
-                    wait = 15 * (attempt + 1)
-                    print(
-                        f"Rate limited, retrying in {wait}s (attempt {attempt + 1}/{max_retries})..."
-                    )
-                    time.sleep(wait)
-                    continue
-                raise
-        raise RuntimeError("Groq rate limit: max retries exceeded")
+            max_retries = 3
+            for attempt in range(max_retries):
+                try:
+                    return _orig(*args, **kwargs)
+                except Exception as e:
+                    if (
+                        "rate_limit" in str(type(e).__name__).lower()
+                        or "rate limit" in str(e).lower()
+                        or "RateLimit" in str(type(e).__name__)
+                    ):
+                        wait = 15 * (attempt + 1)
+                        print(
+                            f"Rate limited, retrying in {wait}s (attempt {attempt + 1}/{max_retries})..."
+                        )
+                        time.sleep(wait)
+                        continue
+                    raise
+            raise RuntimeError("Groq rate limit: max retries exceeded")
 
-    litellm.main.completion = _patched
-    litellm.completion = _patched
+        setattr(_patched, "_biocell_patched", True)
+        litellm.main.completion = _patched
+        litellm.completion = _patched
 
     from src.crew import PathologyCrew
 
@@ -384,7 +389,8 @@ def run_chat_query(question: str, results: Dict[str, Any], history: List[Dict[st
                 max_tokens=512,
                 temperature=0.3,
             )
-            return response.choices[0].message.content.strip()
+            content = response.choices[0].message.content
+            return content.strip() if content else ""
         except Exception as e:
             err_str = str(e).lower()
             if "rate" in err_str and "limit" in err_str and attempt < max_retries - 1:
@@ -424,8 +430,8 @@ def build_cell_pie(counts: Dict[str, int]) -> go.Figure:
 
 def build_organ_bar(top3: List[Dict[str, Any]]) -> go.Figure:
     """Build a horizontal bar chart of top-3 organ predictions."""
-    organs = [t["organ"] for t in top3]
-    confs = [t["confidence"] for t in top3]
+    organs = [t.get("organ", "Unknown") for t in top3]
+    confs = [t.get("confidence", 0.0) for t in top3]
     fig = go.Figure(
         go.Bar(
             x=confs,
@@ -457,8 +463,8 @@ def build_spatial_scatter(centroids: List[Dict[str, Any]]) -> go.Figure:
             continue
         fig.add_trace(
             go.Scatter(
-                x=[c["x"] for c in pts],
-                y=[c["y"] for c in pts],
+                x=[c.get("x", 0.0) for c in pts],
+                y=[c.get("y", 0.0) for c in pts],
                 mode="markers",
                 name=cell_type,
                 marker=dict(size=6, color=CELL_COLORS.get(cell_type, "#8d99ae")),
@@ -648,6 +654,12 @@ def main() -> None:
     if mask is not None and mask.any() and detected_cells:
         st.markdown("### Segmentation Mask (Class-Specific)")
         overlay = image.copy().astype(np.float64)
+        if overlay.ndim == 2:
+            overlay = np.stack([overlay] * 3, axis=-1)
+        elif overlay.ndim == 3 and overlay.shape[2] == 1:
+            overlay = np.repeat(overlay, 3, axis=2)
+        elif overlay.ndim == 3 and overlay.shape[2] > 3:
+            overlay = overlay[:, :, :3]
 
         mask_ys, mask_xs = np.where(mask > 0)
         if len(mask_ys) > 0 and len(detected_cells) > 0:
@@ -720,15 +732,22 @@ def main() -> None:
     st.markdown("### Spatial Graph Analytics")
     gm = cells["graph_metrics"]
 
+    avg_degree = (
+        (2.0 * gm.get("total_edges", 0) / gm["total_nodes"])
+        if gm.get("total_nodes", 0) > 0
+        else gm.get("avg_degree", 0.0)
+    )
+    components = gm.get("connected_components", gm.get("num_components", 0))
+
     col_a, col_b, col_c, col_d = st.columns(4)
     with col_a:
         render_metric_card("Graph Nodes", str(gm.get("total_nodes", 0)), "Detected cells")
     with col_b:
         render_metric_card("Graph Edges", str(gm.get("total_edges", 0)), "Proximity links")
     with col_c:
-        render_metric_card("Avg Degree", f"{gm.get('avg_degree', 0):.2f}", "Connectivity")
+        render_metric_card("Avg Degree", f"{avg_degree:.2f}", "Connectivity")
     with col_d:
-        render_metric_card("Components", str(gm.get("num_components", 0)), "Clusters")
+        render_metric_card("Components", str(components), "Clusters")
 
     # Interaction matrix
     interactions = gm.get("interaction_matrix", {})

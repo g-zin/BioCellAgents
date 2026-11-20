@@ -77,6 +77,30 @@ class TestCropNucleus:
             crop = crop_nucleus(image, centroid=(100, 100), crop_size=size)
             assert crop.shape == (size, size, 3)
 
+    def test_out_of_bounds_centroids_return_exact_zero_crop(self):
+        from src.data.transforms import crop_nucleus
+
+        image = np.full((256, 256, 3), 200, dtype=np.uint8)
+        for centroid in [(-30.0, -30.0), (300.0, 300.0), (-50.0, 100.0), (100.0, 300.0)]:
+            crop = crop_nucleus(image, centroid=centroid, crop_size=48)
+            assert crop.shape == (48, 48, 3)
+            assert crop.dtype == np.uint8
+            assert np.all(crop == 0)
+
+        gray = np.full((64, 64), 120, dtype=np.float32)
+        gray_crop = crop_nucleus(gray, centroid=(-30.0, -30.0), crop_size=48)
+        assert gray_crop.shape == (48, 48)
+        assert gray_crop.dtype == np.float32
+        assert np.all(gray_crop == 0)
+
+    def test_partially_out_of_bounds_centroids_exact_shape(self):
+        from src.data.transforms import crop_nucleus
+
+        image = np.random.randint(0, 255, (256, 256, 3), dtype=np.uint8)
+        for centroid in [(-10.0, 50.0), (260.0, 50.0), (50.0, -10.0), (50.0, 260.0)]:
+            crop = crop_nucleus(image, centroid=centroid, crop_size=49)
+            assert crop.shape == (49, 49, 3)
+
 
 class TestExtractCellCrops:
     """Tests for extract_cell_crops."""

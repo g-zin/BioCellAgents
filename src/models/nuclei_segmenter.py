@@ -171,6 +171,14 @@ class NucleiSegmenter:
                         cell_binary_mask[channel_mask == inst_id] = 1
                         cell_masks[cell_id] = cell_binary_mask
                         cell_id += 1
+        elif mask_patch.ndim == 3:
+            raise ValueError(
+                f"3D mask_patch must have at least 5 channels for PanNuke classes, got shape {mask_patch.shape}"
+            )
+        elif mask_patch.ndim != 2:
+            raise ValueError(
+                f"Expected 2D or 3D mask_patch, got {mask_patch.ndim}D array with shape {mask_patch.shape}"
+            )
         else:
             combined_mask = (mask_patch > 0).astype(np.uint8)
             labeled_array, num_features = ndimage.label(combined_mask)
@@ -252,26 +260,47 @@ class NucleiSegmenter:
         Returns:
             Cropped patch (crop_size x crop_size x C)
         """
+        if crop_size <= 0:
+            raise ValueError(f"crop_size must be positive, got {crop_size}")
+
         h, w = image.shape[:2]
         cy, cx = int(centroid["y"]), int(centroid["x"])
         half = crop_size // 2
+        y_start = cy - half
+        y_end = y_start + crop_size
+        x_start = cx - half
+        x_end = x_start + crop_size
 
-        y1 = max(0, cy - half)
-        y2 = min(h, cy + half)
-        x1 = max(0, cx - half)
-        x2 = min(w, cx + half)
+        y1 = max(0, min(h, y_start))
+        y2 = max(0, min(h, y_end))
+        x1 = max(0, min(w, x_start))
+        x2 = max(0, min(w, x_end))
 
-        pad_top = max(0, half - cy)
-        pad_bottom = max(0, (cy + half) - h)
-        pad_left = max(0, half - cx)
-        pad_right = max(0, (cx + half) - w)
+        if y1 >= y2 or x1 >= x2:
+            out_shape = (
+                (crop_size, crop_size, image.shape[2])
+                if image.ndim == 3
+                else (crop_size, crop_size)
+            )
+            return np.zeros(out_shape, dtype=image.dtype)
+
+        pad_top = max(0, -y_start)
+        pad_bottom = max(0, y_end - h)
+        pad_left = max(0, -x_start)
+        pad_right = max(0, x_end - w)
 
         crop = image[y1:y2, x1:x2]
 
         if pad_top > 0 or pad_bottom > 0 or pad_left > 0 or pad_right > 0:
-            crop = cv2.copyMakeBorder(
-                crop, pad_top, pad_bottom, pad_left, pad_right, cv2.BORDER_REFLECT
+            crop_h, crop_w = crop.shape[:2]
+            border_mode = (
+                cv2.BORDER_REFLECT
+                if crop_h > max(pad_top, pad_bottom) and crop_w > max(pad_left, pad_right)
+                else cv2.BORDER_REPLICATE
             )
+            crop = cv2.copyMakeBorder(crop, pad_top, pad_bottom, pad_left, pad_right, border_mode)
+            if image.ndim == 3 and crop.ndim == 2:
+                crop = crop[:, :, np.newaxis]
 
         return crop
 

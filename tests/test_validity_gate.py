@@ -72,3 +72,12 @@ class TestValidityGate:
         assert "Status: FAIL" in fail_ctx
         assert "WARNING:" in fail_ctx
         assert "RECOMMENDATION:" in fail_ctx
+
+        class_only_ctx = gate.to_prompt_context(100, {"Neoplastic": 98, "Dead": 2})
+        assert "Status: FAIL - per-class cell count below minimum threshold" in class_only_ctx
+        assert "cell count below minimum threshold" not in class_only_ctx.replace(
+            "per-class cell count below minimum threshold", ""
+        )
+
+        total_only_ctx = gate.to_prompt_context(10, {"Neoplastic": 5, "Inflammatory": 5})
+        assert "Status: FAIL - cell count below minimum threshold" in total_only_ctx

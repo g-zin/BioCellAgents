@@ -36,6 +36,9 @@ def crop_nucleus(
     crop_size: int = 48,
 ) -> np.ndarray:
     """Extract a fixed-size square patch centered at (y, x) with border padding."""
+    if crop_size <= 0:
+        raise ValueError(f"crop_size must be positive, got {crop_size}")
+
     h, w = image.shape[:2]
     cy = int(round(centroid[0]))
     cx = int(round(centroid[1]))
@@ -47,10 +50,16 @@ def crop_nucleus(
     pad_left = max(0, half - cx)
     pad_right = max(0, (cx + rem) - w)
 
-    y1 = max(0, cy - half)
-    y2 = min(h, cy + rem)
-    x1 = max(0, cx - half)
-    x2 = min(w, cx + rem)
+    y1 = max(0, min(h, cy - half))
+    y2 = max(0, min(h, cy + rem))
+    x1 = max(0, min(w, cx - half))
+    x2 = max(0, min(w, cx + rem))
+
+    if y1 >= y2 or x1 >= x2:
+        out_shape = (
+            (crop_size, crop_size, image.shape[2]) if image.ndim == 3 else (crop_size, crop_size)
+        )
+        return np.zeros(out_shape, dtype=image.dtype)
 
     crop = image[y1:y2, x1:x2]
 
@@ -69,6 +78,8 @@ def crop_nucleus(
             pad_right,
             border_mode,
         )
+        if image.ndim == 3 and crop.ndim == 2:
+            crop = crop[:, :, np.newaxis]
 
     return crop
 

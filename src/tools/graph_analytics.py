@@ -60,8 +60,8 @@ class SpatialGraphAnalytics:
         """Calculates pairwise edge counts between different cell classes."""
         interactions: Dict[str, int] = {}
         for u, v in G.edges():
-            c1 = G.nodes[u].get("cell_class", "Unknown")
-            c2 = G.nodes[v].get("cell_class", "Unknown")
+            c1 = str(G.nodes[u].get("cell_class") or "Unknown")
+            c2 = str(G.nodes[v].get("cell_class") or "Unknown")
 
             # Alphabetically sort pair key to ensure undirected graph consistency
             pair = tuple(sorted([c1, c2]))
@@ -176,7 +176,10 @@ class SpatialGraphAnalytics:
         else:
             ax.grid(True, linestyle=":", alpha=0.4)
 
-        ax.legend(loc="upper right", frameon=True, facecolor="white", framealpha=0.85, fontsize=8)
+        if grouped_coords:
+            ax.legend(
+                loc="upper right", frameon=True, facecolor="white", framealpha=0.85, fontsize=8
+            )
 
         img_filename = f"spatial_graph_patch_{patch_index}.png"
         img_filepath = reports_path / img_filename
@@ -194,17 +197,17 @@ class SpatialGraphAnalytics:
     ) -> Dict[str, Any]:
         num_cells = len(centroids)
 
-        if num_cells < 2:
+        if num_cells == 0:
             image_path = self._generate_and_save_plot(
                 nx.Graph(), patch_index=patch_index, he_image=he_image
             )
             return {
-                "total_nodes": num_cells,
+                "total_nodes": 0,
                 "total_edges": 0,
                 "avg_clustering_coefficient": 0.0,
                 "avg_neighbor_distance_px": 0.0,
                 "cellular_density_per_100x100px": 0.0,
-                "connected_components": num_cells,
+                "connected_components": 0,
                 "interaction_matrix": {},
                 "immune_infiltration": {
                     "mean_immune_to_tumor_dist_px": 0.0,
@@ -218,14 +221,45 @@ class SpatialGraphAnalytics:
 
         G = nx.Graph()
 
-        # Populate nodes with cell attributes
-        for cell in centroids:
+        # Populate nodes with unique internal keys to avoid overwrites/self-loops on duplicate IDs
+        node_keys: List[Any] = []
+        seen_keys: set[Any] = set()
+        for idx, cell in enumerate(centroids):
+            raw_id = cell.get("id", idx)
+            node_key: Any = raw_id
+            if node_key in seen_keys:
+                node_key = (raw_id, idx)
+                while node_key in seen_keys:
+                    node_key = f"{raw_id}__{idx}_{len(seen_keys)}"
+            seen_keys.add(node_key)
+            node_keys.append(node_key)
+            cell_class = str(cell.get("class") or "Unknown")
             G.add_node(
-                cell["id"],
+                node_key,
+                cell_id=raw_id,
                 pos=(float(cell["x"]), float(cell["y"])),
-                cell_class=cell.get("class", "Unknown"),
+                cell_class=cell_class,
                 area=cell.get("area_px", 0),
             )
+
+        patch_area_px = 256 * 256
+        cellular_density = round((num_cells / patch_area_px) * 10000, 2)
+
+        if num_cells == 1:
+            immune_infiltration = self.compute_immune_infiltration_metrics(G)
+            image_path = self._generate_and_save_plot(G, patch_index=patch_index, he_image=he_image)
+            return {
+                "total_nodes": 1,
+                "total_edges": 0,
+                "avg_clustering_coefficient": 0.0,
+                "avg_neighbor_distance_px": 0.0,
+                "cellular_density_per_100x100px": cellular_density,
+                "connected_components": 1,
+                "interaction_matrix": {},
+                "immune_infiltration": immune_infiltration,
+                "graph_image_path": image_path,
+                "status": "Insufficient centroids for spatial graph construction",
+            }
 
         # Extract coordinates and enforce strictly (N, 2) array shape
         coords = np.array([[float(c["x"]), float(c["y"])] for c in centroids], dtype=np.float64)
@@ -243,7 +277,7 @@ class SpatialGraphAnalytics:
             for j in range(i + 1, num_cells):
                 d = dist_matrix[i, j]
                 if d <= self.max_distance_px:
-                    G.add_edge(centroids[i]["id"], centroids[j]["id"], weight=round(float(d), 2))
+                    G.add_edge(node_keys[i], node_keys[j], weight=round(float(d), 2))
 
         # Calculate standard topology metrics
         total_edges = G.number_of_edges()

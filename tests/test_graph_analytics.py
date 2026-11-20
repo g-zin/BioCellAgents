@@ -161,3 +161,43 @@ class TestSpatialGraphAnalytics:
         fb_res = tool._run(fold_dir=str(tmp_path), patch_index=0)
         assert fb_res["total_cell_count"] == 2
         assert fb_res["detection_source"].startswith("Ground-truth masks (model fallback:")
+
+    def test_none_class_duplicate_ids_and_single_cell_metrics_no_warning(
+        self, monkeypatch, tmp_path
+    ):
+        import warnings
+
+        monkeypatch.chdir(tmp_path)
+        analyzer = SpatialGraphAnalytics(max_distance_px=50.0)
+
+        # Single Inflammatory cell: accurate density, infiltration count, and zero legend warnings
+        with warnings.catch_warnings(record=True) as caught:
+            warnings.simplefilter("always")
+            res_one = analyzer.build_graph_and_compute_metrics(
+                [{"id": 1, "x": 10.0, "y": 20.0, "class": "Inflammatory"}],
+                patch_index=10,
+            )
+            res_zero = analyzer.build_graph_and_compute_metrics([], patch_index=11)
+
+        legend_warnings = [w for w in caught if "artists with labels" in str(w.message)]
+        assert legend_warnings == []
+        assert res_one["cellular_density_per_100x100px"] == round((1 / (256 * 256)) * 10000, 2)
+        assert res_one["immune_infiltration"]["inflammatory_count"] == 1
+        assert res_zero["total_nodes"] == 0
+
+        # Duplicate IDs and explicit class=None must not overwrite nodes, create self-loops, or crash
+        dup_centroids = [
+            {"id": 1, "x": 10.0, "y": 10.0, "class": "Inflammatory"},
+            {"id": 1, "x": 20.0, "y": 10.0, "class": "Neoplastic"},
+            {"id": 2, "x": 25.0, "y": 10.0, "class": None},
+        ]
+        res_dup = analyzer.build_graph_and_compute_metrics(dup_centroids, patch_index=12)
+        assert res_dup["total_nodes"] == 3
+        assert res_dup["total_edges"] == 3
+        assert res_dup["immune_infiltration"]["inflammatory_count"] == 1
+        assert res_dup["immune_infiltration"]["neoplastic_count"] == 1
+        assert res_dup["interaction_matrix"] == {
+            "Inflammatory <-> Neoplastic": 1,
+            "Inflammatory <-> Unknown": 1,
+            "Neoplastic <-> Unknown": 1,
+        }
