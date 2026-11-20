@@ -8,10 +8,8 @@ The two-stage pipeline:
   1. DINOv2CellSegmenter  -> per-pixel class map -> connected components -> centroids
   2. DINOv2CellClassifier -> per-cell type (Neoplastic / Inflammatory / ...)
 """
+
 import os
-
-os.environ["XFORMERS_DISABLED"] = "1"
-
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
@@ -20,9 +18,11 @@ import torch
 from PIL import Image
 
 from src.data.dataset import CELL_TYPES
+from src.inference.calibration import TemperatureScaler
 from src.models.dino_classifier import DINOv2CellClassifier, DINOv2CellSegmenter
 from src.models.inference_pipeline import TwoStageCellAnalyzer
-from src.inference.calibration import TemperatureScaler
+
+os.environ["XFORMERS_DISABLED"] = "1"
 
 
 def to_uint8_rgb(image: np.ndarray) -> np.ndarray:
@@ -53,14 +53,20 @@ class TrainedCellDetector:
         self.model_size = model_size
         self.segmenter_ckpt = segmenter_ckpt
         self.classifier_ckpt = classifier_ckpt
-        self.device = torch.device(device if device else ("cuda" if torch.cuda.is_available() else "cpu"))
+        self.device = torch.device(
+            device if device else ("cuda" if torch.cuda.is_available() else "cpu")
+        )
         self._analyzer: Optional[TwoStageCellAnalyzer] = None
 
     def _load_weights(self, model, checkpoint_path: str):
         if not checkpoint_path or not Path(checkpoint_path).exists():
             raise FileNotFoundError(f"Checkpoint not found: {checkpoint_path}")
         checkpoint = torch.load(checkpoint_path, map_location=self.device, weights_only=False)
-        state_dict = checkpoint.get("model_state_dict", checkpoint) if isinstance(checkpoint, dict) else checkpoint
+        state_dict = (
+            checkpoint.get("model_state_dict", checkpoint)
+            if isinstance(checkpoint, dict)
+            else checkpoint
+        )
         model.load_state_dict(state_dict)
         return model
 
@@ -88,12 +94,16 @@ class TrainedCellDetector:
         calibration_scaler = TemperatureScaler.load(cal_path)
 
         self._analyzer = TwoStageCellAnalyzer(
-            segmenter, classifier, device=str(self.device),
+            segmenter,
+            classifier,
+            device=str(self.device),
             calibration_scaler=calibration_scaler,
         )
         return self._analyzer
 
-    def detect_and_classify(self, image: np.ndarray, padding: int = 10) -> tuple[List[Dict[str, Any]], np.ndarray]:
+    def detect_and_classify(
+        self, image: np.ndarray, padding: int = 10
+    ) -> tuple[List[Dict[str, Any]], np.ndarray]:
         """Detect + classify cells in an image patch.
 
         Args:
@@ -115,13 +125,15 @@ class TrainedCellDetector:
         centroids = []
         for i, cell in enumerate(detected_cells, 1):
             cx, cy = cell["centroid"]
-            centroids.append({
-                "id": cell.get("cell_id", i),
-                "y": float(cy),
-                "x": float(cx),
-                "class": cell.get("class_name", "Unknown"),
-                "area_px": -1,
-            })
+            centroids.append(
+                {
+                    "id": cell.get("cell_id", i),
+                    "y": float(cy),
+                    "x": float(cx),
+                    "class": cell.get("class_name", "Unknown"),
+                    "area_px": -1,
+                }
+            )
         return centroids
 
     def class_counts(self, detected_cells: List[Dict[str, Any]]) -> Dict[str, int]:

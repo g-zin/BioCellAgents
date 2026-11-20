@@ -1,13 +1,17 @@
-import os
 import argparse
 from pathlib import Path
-from dotenv import load_dotenv
+
 import litellm
 import litellm.main
+from dotenv import load_dotenv
+
+from src.crew import PathologyCrew
+from src.pipeline import build_precomputed_results
 
 # Set global LiteLLM parameters before execution
 litellm.drop_params = True
 litellm.cache = None
+
 
 # --- CrewAI <-> Groq compatibility shim ------------------------------------
 # CrewAI marks stable prompt prefixes with a `cache_breakpoint` flag (an
@@ -45,10 +49,6 @@ litellm.completion = _patched_completion
 
 # Load environment variables (.env)
 load_dotenv()
-
-# Fixed import to match PathologyCrew in src/crew.py
-from src.crew import PathologyCrew
-from src.pipeline import build_precomputed_results
 
 
 def run_pipeline(fold_dir: str = "data/raw/fold1", patch_index: int = 0):
@@ -95,8 +95,12 @@ def run_pipeline(fold_dir: str = "data/raw/fold1", patch_index: int = 0):
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Run BioCellAgents Multi-Agent Pathology Engine")
-    parser.add_argument("--fold_dir", type=str, default="data/raw/fold1", help="Path to PanNuke fold directory")
-    parser.add_argument("--patch_index", type=int, default=0, help="Index of image patch to analyze")
+    parser.add_argument(
+        "--fold_dir", type=str, default="data/raw/fold1", help="Path to PanNuke fold directory"
+    )
+    parser.add_argument(
+        "--patch_index", type=int, default=0, help="Index of image patch to analyze"
+    )
     args = parser.parse_args()
 
     run_pipeline(fold_dir=args.fold_dir, patch_index=args.patch_index)

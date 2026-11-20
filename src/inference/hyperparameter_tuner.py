@@ -3,19 +3,19 @@
 Provides grid search and random search over hyperparameters
 for all 3 model types (segmentation, cell classification, organ classification).
 """
+
 import itertools
 import json
 import random
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Callable, Dict, List, Optional, Tuple
-
-import numpy as np
+from typing import Any, Callable, Dict, List, Union
 
 
 @dataclass
 class TuningResult:
     """Result of a single hyperparameter trial."""
+
     params: Dict[str, Any]
     score: float
     metrics: Dict[str, Any] = field(default_factory=dict)
@@ -99,7 +99,7 @@ class HyperparameterTuner:
 
             try:
                 metrics = train_fn(params)
-                score = metrics.get(metric, 0.0)
+                score = float(metrics.get(metric, 0.0))
             except Exception as e:
                 if verbose:
                     print(f"   Trial {i} failed: {e}")
@@ -126,10 +126,10 @@ class HyperparameterTuner:
 
         return best
 
-    def save_results(self, output_path: str) -> Path:
+    def save_results(self, output_path: Union[str, Path]) -> Path:
         """Save tuning results to JSON."""
-        output_path = Path(output_path)
-        output_path.parent.mkdir(parents=True, exist_ok=True)
+        out_path = Path(output_path)
+        out_path.parent.mkdir(parents=True, exist_ok=True)
 
         data = {
             "strategy": self.search_strategy,
@@ -145,9 +145,9 @@ class HyperparameterTuner:
                 for r in self.results
             ],
         }
-        with open(output_path, "w", encoding="utf-8") as f:
+        with open(out_path, "w", encoding="utf-8") as f:
             json.dump(data, f, indent=2, ensure_ascii=False, default=str)
-        return output_path
+        return out_path
 
     def get_top_n(self, n: int = 5) -> List[TuningResult]:
         """Get top N results sorted by score."""

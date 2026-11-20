@@ -4,11 +4,13 @@ BioCellAgents Dashboard Charts
 Interactive chart builders for the BioCellAgents dashboard.
 """
 
+from __future__ import annotations
+
 import numpy as np
 import plotly.graph_objects as go
 
-from src.data.dataset import CELL_TYPES
 from src.dashboard.styles import CELL_COLORS
+from src.data.dataset import CELL_TYPES
 
 
 def build_confidence_histogram(cells: list) -> go.Figure:
@@ -26,13 +28,15 @@ def build_confidence_histogram(cells: list) -> go.Figure:
         if not subset:
             continue
         confs = [c["confidence"] for c in subset]
-        fig.add_trace(go.Histogram(
-            x=confs,
-            name=ct,
-            marker=dict(color=CELL_COLORS.get(ct, "#888")),
-            opacity=0.7,
-            nbinsx=20,
-        ))
+        fig.add_trace(
+            go.Histogram(
+                x=confs,
+                name=ct,
+                marker=dict(color=CELL_COLORS.get(ct, "#888")),
+                opacity=0.7,
+                nbinsx=20,
+            )
+        )
     fig.update_layout(
         title="Confidence Distribution by Cell Type",
         barmode="overlay",
@@ -67,13 +71,15 @@ def build_size_histogram(cells: list) -> go.Figure:
             w = bbox[2] - bbox[0]
             h = bbox[3] - bbox[1]
             areas.append(w * h)
-        fig.add_trace(go.Histogram(
-            x=areas,
-            name=ct,
-            marker=dict(color=CELL_COLORS.get(ct, "#888")),
-            opacity=0.7,
-            nbinsx=20,
-        ))
+        fig.add_trace(
+            go.Histogram(
+                x=areas,
+                name=ct,
+                marker=dict(color=CELL_COLORS.get(ct, "#888")),
+                opacity=0.7,
+                nbinsx=20,
+            )
+        )
     fig.update_layout(
         title="Cell Size Distribution (Area in px\u00b2)",
         barmode="overlay",
@@ -126,16 +132,18 @@ def build_interaction_heatmap(spatial_results: dict) -> go.Figure | None:
     if data.max() == 0:
         return None
 
-    fig = go.Figure(go.Heatmap(
-        z=data,
-        x=cell_types,
-        y=cell_types,
-        colorscale="Viridis",
-        text=data.astype(str),
-        texttemplate="%{text}",
-        textfont=dict(size=12),
-        colorbar=dict(title="Mean Dist (px)"),
-    ))
+    fig = go.Figure(
+        go.Heatmap(
+            z=data,
+            x=cell_types,
+            y=cell_types,
+            colorscale="Viridis",
+            text=data.astype(str),
+            texttemplate="%{text}",
+            textfont=dict(size=12),
+            colorbar=dict(title="Mean Dist (px)"),
+        )
+    )
     fig.update_layout(
         title="Cell-Cell Interaction Matrix (Mean Distance)",
         xaxis=dict(title="Target Cell Type", side="bottom"),
@@ -169,11 +177,13 @@ def build_network_graph(spatial_results: dict, cells: list) -> go.Figure | None:
 
     # Compute spring layout positions
     import networkx as nx
+
     G = nx.from_numpy_array(adj)
     pos = nx.spring_layout(G, k=2.0, iterations=50)
 
     # Build edge traces
-    edge_x, edge_y = [], []
+    edge_x: list[float | None] = []
+    edge_y: list[float | None] = []
     for i in range(n):
         for j in range(i + 1, n):
             if adj[i, j] > 0:
@@ -181,13 +191,16 @@ def build_network_graph(spatial_results: dict, cells: list) -> go.Figure | None:
                 edge_y.extend([pos[i][1], pos[j][1], None])
 
     fig = go.Figure()
-    fig.add_trace(go.Scatter(
-        x=edge_x, y=edge_y,
-        mode="lines",
-        line=dict(width=1, color="rgba(100,140,255,0.3)"),
-        name="edges",
-        showlegend=False,
-    ))
+    fig.add_trace(
+        go.Scatter(
+            x=edge_x,
+            y=edge_y,
+            mode="lines",
+            line=dict(width=1, color="rgba(100,140,255,0.3)"),
+            name="edges",
+            showlegend=False,
+        )
+    )
 
     # Node traces per class
     for ct in CELL_TYPES:
@@ -197,17 +210,20 @@ def build_network_graph(spatial_results: dict, cells: list) -> go.Figure | None:
         xs = [pos[i][0] for i, _ in subset]
         ys = [pos[i][1] for i, _ in subset]
         sizes = [8 + 2 * adj[i].sum() for i, _ in subset]
-        fig.add_trace(go.Scatter(
-            x=xs, y=ys,
-            mode="markers",
-            name=ct,
-            marker=dict(
-                size=sizes,
-                color=CELL_COLORS.get(ct, "#888"),
-                line=dict(width=1, color="white"),
-            ),
-            text=[f"{c['cell_id']} ({c['confidence']:.0%})" for _, c in subset],
-        ))
+        fig.add_trace(
+            go.Scatter(
+                x=xs,
+                y=ys,
+                mode="markers",
+                name=ct,
+                marker=dict(
+                    size=sizes,
+                    color=CELL_COLORS.get(ct, "#888"),
+                    line=dict(width=1, color="white"),
+                ),
+                text=[f"{c['cell_id']} ({c['confidence']:.0%})" for _, c in subset],
+            )
+        )
 
     fig.update_layout(
         title="Spatial Proximity Network",

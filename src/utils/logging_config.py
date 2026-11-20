@@ -7,9 +7,9 @@ Provides structured logging with:
 - Inference-specific loggers with latency tracking
 - GPU memory monitoring
 """
+
 import json
 import logging
-import os
 import sys
 import time
 from datetime import datetime
@@ -104,7 +104,6 @@ def get_logger(name: str = "biocell") -> logging.Logger:
     return logger
 
 
-
 class TrainingLogger:
     """Specialized logger for training loops with epoch/step context."""
 
@@ -127,8 +126,12 @@ class TrainingLogger:
         )
 
     def log_epoch_end(
-        self, epoch: int, train_loss: float, val_loss: float,
-        val_metric: float, metric_name: str = "dice",
+        self,
+        epoch: int,
+        train_loss: float,
+        val_loss: float,
+        val_metric: float,
+        metric_name: str = "dice",
     ) -> None:
         elapsed = time.time() - self._epoch_start_time if self._epoch_start_time else 0
         self.logger.info(
@@ -195,6 +198,7 @@ def get_gpu_memory_info() -> dict:
     """Get current GPU memory usage (if CUDA available)."""
     try:
         import torch
+
         if torch.cuda.is_available():
             free, total = torch.cuda.mem_get_info()
             return {

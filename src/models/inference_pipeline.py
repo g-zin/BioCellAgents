@@ -1,21 +1,15 @@
-import torch
-import torch.nn.functional as F
-import numpy as np
-import cv2
 from pathlib import Path
-from torchvision import transforms
-from PIL import Image
+from typing import Union
 
-# Resolve project root (BioCellAgents/) so `src.*` imports work when this file
-# is executed directly as a script (e.g. `python src/models/inference_pipeline.py`).
-import sys
-PROJECT_ROOT = Path(__file__).resolve().parents[2]
-if str(PROJECT_ROOT) not in sys.path:
-    sys.path.insert(0, str(PROJECT_ROOT))
+import cv2
+import numpy as np
+import torch
+import torch.nn as nn
+from PIL import Image
+from torchvision import transforms
 
 from src.inference.calibration import TemperatureScaler
-from src.inference.validity_gate import ValidityGate
-from src.models.cellpose_segmenter import CellposeSegmenter, SemanticSegmenterAdapter
+from src.models.cellpose_segmenter import CellposeSegmenter
 
 
 class TwoStageCellAnalyzer:
@@ -31,8 +25,13 @@ class TwoStageCellAnalyzer:
         connected-components on the returned mask.
     """
 
-    def __init__(self, segmenter_model, classifier_model, device="cuda",
-                 calibration_scaler: TemperatureScaler | None = None):
+    def __init__(
+        self,
+        segmenter_model,
+        classifier_model,
+        device="cuda",
+        calibration_scaler: TemperatureScaler | None = None,
+    ):
         self.device = torch.device(device if torch.cuda.is_available() else "cpu")
 
         # Detect segmenter interface: new-style has .segment() and is NOT a torch.nn.Module
@@ -46,11 +45,13 @@ class TwoStageCellAnalyzer:
         self.classifier = classifier_model.to(self.device).eval()
         self.calibration_scaler = calibration_scaler or TemperatureScaler(default_temperature=2.0)
 
-        self.transform = transforms.Compose([
-            transforms.Resize((224, 224)),
-            transforms.ToTensor(),
-            transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]),
-        ])
+        self.transform = transforms.Compose(
+            [
+                transforms.Resize((224, 224)),
+                transforms.ToTensor(),
+                transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]),
+            ]
+        )
 
     def _get_binary_mask(self, image_pil: Image.Image) -> np.ndarray:
         """Return a binary (H, W) uint8 mask of foreground cells at original resolution."""
@@ -104,21 +105,27 @@ class TwoStageCellAnalyzer:
 
             # Step 3: Classify cell crop
             class_logits = self.classifier(cell_tensor)
-            pred_class_idx = torch.argmax(class_logits, dim=1).item()
-            
+            pred_class_idx = int(torch.argmax(class_logits, dim=1).item())
+
             # Apply temperature scaling calibration
             calibrated_probs = self.calibration_scaler.calibrate(class_logits[0])
-            confidence = calibrated_probs[pred_class_idx].item()
+            confidence = float(calibrated_probs[pred_class_idx].item())
 
             centroid_orig = [float(centroids[i][0]), float(centroids[i][1])]
 
-            detected_cells.append({
-                "cell_id": i,
-                "bbox": [x1, y1, x2, y2],
-                "centroid": centroid_orig,
-                "class_name": cell_classes[pred_class_idx] if pred_class_idx < len(cell_classes) else "Unknown",
-                "confidence": confidence
-            })
+            detected_cells.append(
+                {
+                    "cell_id": i,
+                    "bbox": [x1, y1, x2, y2],
+                    "centroid": centroid_orig,
+                    "class_name": (
+                        cell_classes[pred_class_idx]
+                        if pred_class_idx < len(cell_classes)
+                        else "Unknown"
+                    ),
+                    "confidence": confidence,
+                }
+            )
 
         return binary_mask, detected_cells
 
@@ -129,7 +136,11 @@ def _load_weights(model, checkpoint_path, device):
         print(f"Checkpoint not found at '{checkpoint_path}'. Using randomly initialized weights.")
         return model
     checkpoint = torch.load(checkpoint_path, map_location=device)
-    state_dict = checkpoint.get("model_state_dict", checkpoint) if isinstance(checkpoint, dict) else checkpoint
+    state_dict = (
+        checkpoint.get("model_state_dict", checkpoint)
+        if isinstance(checkpoint, dict)
+        else checkpoint
+    )
     model.load_state_dict(state_dict)
     print(f"Loaded weights from: {checkpoint_path}")
     return model
@@ -147,20 +158,33 @@ def main():
         sys.path.insert(0, str(PROJECT_ROOT))
 
     from src.data.dataset import CELL_TYPES
-    from src.models.dino_classifier import DINOv2CellClassifier, DINOv2CellSegmenter
+    from src.models.dino_classifier import DINOv2CellClassifier
     from src.models.segmentation import build_segmenter
 
-    parser = argparse.ArgumentParser(description="Run BioCellAgents two-stage cell analysis inference")
-    parser.add_argument("--image", type=str, required=True, help="Path to the input tissue image (PNG/JPG)")
-    parser.add_argument("--segmenter_ckpt", type=str,
-                        default="checkpoints/segmentation_deeplabv3plus/best_segmentation_model.pt")
-    parser.add_argument("--classifier_ckpt", type=str,
-                        default="checkpoints/cell_vits14/best_model.pt")
-    parser.add_argument("--model_size", type=str, default="vits14",
-                        choices=["vits14", "vitb14", "vitl14"])
-    parser.add_argument("--arch", type=str, default="deeplabv3plus",
-                        choices=["deeplabv3plus", "dinov2", "cellpose"],
-                        help="Segmentation architecture used for the spatial pass")
+    parser = argparse.ArgumentParser(
+        description="Run BioCellAgents two-stage cell analysis inference"
+    )
+    parser.add_argument(
+        "--image", type=str, required=True, help="Path to the input tissue image (PNG/JPG)"
+    )
+    parser.add_argument(
+        "--segmenter_ckpt",
+        type=str,
+        default="checkpoints/segmentation_deeplabv3plus/best_segmentation_model.pt",
+    )
+    parser.add_argument(
+        "--classifier_ckpt", type=str, default="checkpoints/cell_vits14/best_model.pt"
+    )
+    parser.add_argument(
+        "--model_size", type=str, default="vits14", choices=["vits14", "vitb14", "vitl14"]
+    )
+    parser.add_argument(
+        "--arch",
+        type=str,
+        default="deeplabv3plus",
+        choices=["deeplabv3plus", "dinov2", "cellpose"],
+        help="Segmentation architecture used for the spatial pass",
+    )
     parser.add_argument("--device", type=str, default="cuda")
     parser.add_argument("--padding", type=int, default=10, help="Bounding-box padding in pixels")
     args = parser.parse_args()
@@ -170,6 +194,7 @@ def main():
 
     num_cell_classes = len(CELL_TYPES)
 
+    segmenter: Union[CellposeSegmenter, nn.Module]
     if args.arch == "cellpose":
         # Use pretrained Cellpose-SAM v2 (no checkpoint needed)
         segmenter = CellposeSegmenter(device=str(device))

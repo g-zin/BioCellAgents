@@ -3,8 +3,9 @@
 Tracks loss curves, accuracy, dice scores, and other metrics across epochs.
 Supports JSON/CSV export and optional TensorBoard integration.
 """
-import json
+
 import csv
+import json
 from collections import defaultdict
 from datetime import datetime
 from pathlib import Path
@@ -44,7 +45,9 @@ class MetricsTracker:
 
     def get_best(self, metric: str, maximize: bool = True) -> Optional[Dict[str, Any]]:
         """Get the epoch with the best value for a given metric."""
-        candidates = [e for e in self.history if metric in e and isinstance(e[metric], (int, float))]
+        candidates = [
+            e for e in self.history if metric in e and isinstance(e[metric], (int, float))
+        ]
         if not candidates:
             return None
         if maximize:

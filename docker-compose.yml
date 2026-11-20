@@ -13,6 +13,7 @@ services:
       - ./data:/app/data
       - ./checkpoints:/app/checkpoints
       - ./logs:/app/logs
+      - ./reports:/app/reports
     environment:
       - BIOMED_LOG_LEVEL=INFO
       - CUDA_VISIBLE_DEVICES=0
@@ -35,11 +36,12 @@ services:
       context: .
       dockerfile: Dockerfile
     container_name: biocell-trainer
-    command: ["python", "main.py", "train", "--task", "segmentation"]
+    command: ["python", "-m", "src.models.train", "--train_fold", "1,2", "--val_fold", "3"]
     volumes:
       - ./data:/app/data
       - ./checkpoints:/app/checkpoints
       - ./logs:/app/logs
+      - ./reports:/app/reports
     environment:
       - BIOMED_LOG_LEVEL=DEBUG
       - CUDA_VISIBLE_DEVICES=0

@@ -1,11 +1,12 @@
+import logging
 import os
 import time
-import logging
+from typing import Any, Dict, Optional, cast
 
-from dotenv import load_dotenv
-from crewai import Agent, Crew, Process, Task, LLM
-from crewai.project import CrewBase, agent, crew, task
+from crewai import LLM, Agent, Crew, Process, Task
 from crewai.llms.cache import CACHE_BREAKPOINT_KEY
+from crewai.project import CrewBase, agent, crew, task
+from dotenv import load_dotenv
 
 load_dotenv()
 
@@ -23,10 +24,7 @@ ANTI_TOOL_CALL_PROMPT = (
 
 
 def _strip_cache_breakpoint(messages: list[dict]) -> list[dict]:
-    return [
-        {k: v for k, v in msg.items() if k != CACHE_BREAKPOINT_KEY}
-        for msg in messages
-    ]
+    return [{k: v for k, v in msg.items() if k != CACHE_BREAKPOINT_KEY} for msg in messages]
 
 
 def _inject_anti_tool_call_prompt(messages: list[dict]) -> list[dict]:
@@ -44,17 +42,26 @@ class GroqCompatibleLLM(LLM):
     def _format_messages_for_provider(self, messages: list) -> list:
         messages = _strip_cache_breakpoint(messages)
         messages = _inject_anti_tool_call_prompt(messages)
-        return super()._format_messages_for_provider(messages)
+        return super()._format_messages_for_provider(cast(Any, messages))
 
-    def _handle_non_streaming_response(self, params, callbacks=None,
-                                       available_functions=None, from_task=None,
-                                       from_agent=None, response_model=None):
+    def _handle_non_streaming_response(
+        self,
+        params,
+        callbacks=None,
+        available_functions=None,
+        from_task=None,
+        from_agent=None,
+        response_model=None,
+    ):
         """Override to catch tool-call hallucination errors at the source."""
         try:
             return super()._handle_non_streaming_response(
-                params=params, callbacks=callbacks,
-                available_functions=available_functions, from_task=from_task,
-                from_agent=from_agent, response_model=response_model,
+                params=params,
+                callbacks=callbacks,
+                available_functions=available_functions,
+                from_task=from_task,
+                from_agent=from_agent,
+                response_model=response_model,
             )
         except Exception as e:
             error_str = str(e)
@@ -65,7 +72,9 @@ class GroqCompatibleLLM(LLM):
             )
             if not is_tool_call_error:
                 raise
-            logger.warning("Tool-call hallucination detected in _handle_non_streaming_response. Returning fallback.")
+            logger.warning(
+                "Tool-call hallucination detected in _handle_non_streaming_response. Returning fallback."
+            )
             return (
                 "I am unable to perform external searches or tool calls as I have "
                 "no tools available. Based on the information provided in the prompt, "
@@ -76,26 +85,46 @@ class GroqCompatibleLLM(LLM):
                 "missing or empty in the provided data."
             )
 
-    def call(self, messages, tools=None, callbacks=None, available_functions=None,
-             from_task=None, from_agent=None, response_model=None):
+    def call(
+        self,
+        messages,
+        tools=None,
+        callbacks=None,
+        available_functions=None,
+        from_task=None,
+        from_agent=None,
+        response_model=None,
+    ):
         """Override call() with rate-limit retry + tool-call hallucination fallback."""
         max_retries = 3
-        last_error = None
+        last_error: Optional[Exception] = None
         for attempt in range(max_retries):
             try:
                 result = super().call(
-                    messages=messages, tools=tools, callbacks=callbacks,
-                    available_functions=available_functions, from_task=from_task,
-                    from_agent=from_agent, response_model=response_model,
+                    messages=messages,
+                    tools=tools,
+                    callbacks=callbacks,
+                    available_functions=available_functions,
+                    from_task=from_task,
+                    from_agent=from_agent,
+                    response_model=response_model,
                 )
                 logger.info("GroqCompatibleLLM.call() succeeded")
                 return result
             except Exception as e:
                 error_str = str(e)
-                logger.error("GroqCompatibleLLM.call() failed (attempt %d/%d): %s",
-                             attempt + 1, max_retries, error_str[:500])
+                logger.error(
+                    "GroqCompatibleLLM.call() failed (attempt %d/%d): %s",
+                    attempt + 1,
+                    max_retries,
+                    error_str[:500],
+                )
                 # Rate limit error — retry with exponential backoff
-                if "RateLimitError" in error_str or "rate_limit" in error_str.lower() or "rate limit" in error_str.lower():
+                if (
+                    "RateLimitError" in error_str
+                    or "rate_limit" in error_str.lower()
+                    or "rate limit" in error_str.lower()
+                ):
                     wait_time = (attempt + 1) * 12  # 12s, 24s, 36s
                     logger.warning("Rate limit hit. Retrying in %ds...", wait_time)
                     time.sleep(wait_time)
@@ -108,7 +137,9 @@ class GroqCompatibleLLM(LLM):
                     or "model called a tool" in error_str
                 )
                 if is_tool_call_error:
-                    logger.warning("Tool-call hallucination detected in call(). Returning fallback.")
+                    logger.warning(
+                        "Tool-call hallucination detected in call(). Returning fallback."
+                    )
                     return (
                         "I am unable to perform external searches or tool calls as I have "
                         "no tools available. Based on the information provided in the prompt, "
@@ -120,17 +151,28 @@ class GroqCompatibleLLM(LLM):
                     )
                 raise
         # All retries exhausted
-        raise last_error
+        if last_error is not None:
+            raise last_error
+        raise RuntimeError("GroqCompatibleLLM.call() exhausted retries without captured exception")
 
-    async def _ahandle_non_streaming_response(self, params, callbacks=None,
-                                               available_functions=None, from_task=None,
-                                               from_agent=None, response_model=None):
+    async def _ahandle_non_streaming_response(
+        self,
+        params,
+        callbacks=None,
+        available_functions=None,
+        from_task=None,
+        from_agent=None,
+        response_model=None,
+    ):
         """Async version of _handle_non_streaming_response with fallback logic."""
         try:
             return await super()._ahandle_non_streaming_response(
-                params=params, callbacks=callbacks,
-                available_functions=available_functions, from_task=from_task,
-                from_agent=from_agent, response_model=response_model,
+                params=params,
+                callbacks=callbacks,
+                available_functions=available_functions,
+                from_task=from_task,
+                from_agent=from_agent,
+                response_model=response_model,
             )
         except Exception as e:
             error_str = str(e)
@@ -141,7 +183,9 @@ class GroqCompatibleLLM(LLM):
             )
             if not is_tool_call_error:
                 raise
-            logger.warning("Tool-call hallucination detected in _ahandle_non_streaming_response. Returning fallback.")
+            logger.warning(
+                "Tool-call hallucination detected in _ahandle_non_streaming_response. Returning fallback."
+            )
             return (
                 "I am unable to perform external searches or tool calls as I have "
                 "no tools available. Based on the information provided in the prompt, "
@@ -152,14 +196,26 @@ class GroqCompatibleLLM(LLM):
                 "missing or empty in the provided data."
             )
 
-    async def acall(self, messages, tools=None, callbacks=None, available_functions=None,
-                    from_task=None, from_agent=None, response_model=None):
+    async def acall(
+        self,
+        messages,
+        tools=None,
+        callbacks=None,
+        available_functions=None,
+        from_task=None,
+        from_agent=None,
+        response_model=None,
+    ):
         """Async version of call() with the same fallback logic."""
         try:
             return await super().acall(
-                messages=messages, tools=tools, callbacks=callbacks,
-                available_functions=available_functions, from_task=from_task,
-                from_agent=from_agent, response_model=response_model,
+                messages=messages,
+                tools=tools,
+                callbacks=callbacks,
+                available_functions=available_functions,
+                from_task=from_task,
+                from_agent=from_agent,
+                response_model=response_model,
             )
         except Exception as e:
             error_str = str(e)
@@ -182,55 +238,64 @@ class GroqCompatibleLLM(LLM):
             )
 
 
-def create_llm(model_name: str = None) -> LLM:
+def create_llm(model_name: Optional[str] = None) -> LLM:
     if model_name is None:
         model_name = os.getenv("MODEL", DEFAULT_MODEL)
-    kwargs = {"model": model_name}
     if "groq" in model_name.lower():
-        return GroqCompatibleLLM(**kwargs, drop_params=True)
-    return LLM(**kwargs)
+        return cast(Any, GroqCompatibleLLM)(model=model_name, drop_params=True)
+    return LLM(model=model_name)
 
 
 @CrewBase
 class PathologyCrew:
-    agents_config = "../config/agents.yaml"
-    tasks_config = "../config/tasks.yaml"
+    agents_config: Any = "../config/agents.yaml"
+    tasks_config: Any = "../config/tasks.yaml"
 
-    def __init__(self, llm: LLM = None, **kwargs):
+    def __init__(self, llm: Optional[LLM] = None, **kwargs: Any) -> None:
         self._llm = llm or create_llm()
+
+    def _agent_cfg(self, name: str) -> Dict[str, Any]:
+        return cast(Dict[str, Any], self.agents_config)[name]
+
+    def _task_cfg(self, name: str) -> Dict[str, Any]:
+        return cast(Dict[str, Any], self.tasks_config)[name]
 
     @agent
     def pathology_cv_analyst(self) -> Agent:
-        return Agent(config=self.agents_config["pathology_cv_analyst"], llm=self._llm, verbose=True)
+        return Agent(config=self._agent_cfg("pathology_cv_analyst"), llm=self._llm, verbose=True)
 
     @agent
     def spatial_bio_analyst(self) -> Agent:
-        return Agent(config=self.agents_config["spatial_bio_analyst"], llm=self._llm, verbose=True)
+        return Agent(config=self._agent_cfg("spatial_bio_analyst"), llm=self._llm, verbose=True)
 
     @agent
     def literature_researcher(self) -> Agent:
-        return Agent(config=self.agents_config["literature_researcher"], llm=self._llm, verbose=True)
+        return Agent(config=self._agent_cfg("literature_researcher"), llm=self._llm, verbose=True)
 
     @agent
     def clinical_report_writer(self) -> Agent:
-        return Agent(config=self.agents_config["clinical_report_writer"], llm=self._llm, verbose=True)
+        return Agent(config=self._agent_cfg("clinical_report_writer"), llm=self._llm, verbose=True)
 
     @task
     def image_parsing_task(self) -> Task:
-        return Task(config=self.tasks_config["image_parsing_task"])
+        return cast(Any, Task)(config=self._task_cfg("image_parsing_task"))
 
     @task
     def spatial_analysis_task(self) -> Task:
-        return Task(config=self.tasks_config["spatial_analysis_task"])
+        return cast(Any, Task)(config=self._task_cfg("spatial_analysis_task"))
 
     @task
     def literature_research_task(self) -> Task:
-        return Task(config=self.tasks_config["literature_research_task"])
+        return cast(Any, Task)(config=self._task_cfg("literature_research_task"))
 
     @task
     def pathology_synthesis_task(self) -> Task:
-        return Task(config=self.tasks_config["pathology_synthesis_task"], output_file="report.md")
+        return cast(Any, Task)(
+            config=self._task_cfg("pathology_synthesis_task"), output_file="report.md"
+        )
 
     @crew
     def crew(self) -> Crew:
-        return Crew(agents=self.agents, tasks=self.tasks, process=Process.sequential, verbose=True)
+        agents = cast(list[Any], getattr(self, "agents", []))
+        tasks = cast(list[Any], getattr(self, "tasks", []))
+        return Crew(agents=agents, tasks=tasks, process=Process.sequential, verbose=True)

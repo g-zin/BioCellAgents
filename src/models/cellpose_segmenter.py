@@ -13,13 +13,13 @@ This module provides two segmenter classes that expose a unified
 
 from __future__ import annotations
 
-import numpy as np
-import cv2
-from PIL import Image
 from typing import Optional
 
+import cv2
+import numpy as np
 import torch
 import torch.nn as nn
+from PIL import Image
 from torchvision import transforms
 
 
@@ -88,14 +88,16 @@ class SemanticSegmenterAdapter:
         )
         self.model = model.to(self.device).eval()
 
-        self.transform = transforms.Compose([
-            transforms.Resize((224, 224)),
-            transforms.ToTensor(),
-            transforms.Normalize(
-                mean=[0.485, 0.456, 0.406],
-                std=[0.229, 0.224, 0.225],
-            ),
-        ])
+        self.transform = transforms.Compose(
+            [
+                transforms.Resize((224, 224)),
+                transforms.ToTensor(),
+                transforms.Normalize(
+                    mean=[0.485, 0.456, 0.406],
+                    std=[0.229, 0.224, 0.225],
+                ),
+            ]
+        )
 
     @torch.no_grad()
     def segment(self, image_pil: Image.Image) -> np.ndarray:
@@ -117,7 +119,5 @@ class SemanticSegmenterAdapter:
         binary_mask_224 = (pred_class_mask > 0).astype(np.uint8)
 
         # Resize to original resolution
-        binary_mask = cv2.resize(
-            binary_mask_224, (orig_w, orig_h), interpolation=cv2.INTER_NEAREST
-        )
+        binary_mask = cv2.resize(binary_mask_224, (orig_w, orig_h), interpolation=cv2.INTER_NEAREST)
         return binary_mask

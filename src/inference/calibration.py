@@ -25,6 +25,7 @@ Usage:
     scaler.save("checkpoints/organ/calibration.json")
     scaler = TemperatureScaler.load("checkpoints/organ/calibration.json")
 """
+
 from __future__ import annotations
 
 import json
@@ -238,7 +239,5 @@ class TemperatureScaler:
     def __repr__(self) -> str:
         status = "fitted" if self.fitted else "default"
         return (
-            f"TemperatureScaler(T={self.temperature:.4f}, "
-            f"status={status}, n={self.n_samples})"
+            f"TemperatureScaler(T={self.temperature:.4f}, " f"status={status}, n={self.n_samples})"
         )
-

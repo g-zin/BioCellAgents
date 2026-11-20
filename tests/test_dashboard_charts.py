@@ -2,20 +2,20 @@
 Unit tests for BioCellAgents dashboard chart builders.
 """
 
-import pytest
 import numpy as np
 import plotly.graph_objects as go
+import pytest
 
 from src.dashboard.charts import (
     build_confidence_histogram,
-    build_size_histogram,
     build_interaction_heatmap,
     build_network_graph,
+    build_size_histogram,
 )
 from src.dashboard.styles import CELL_COLORS, OKABE_ITO_COLORS
 
-
 # --- Test fixtures ---
+
 
 @pytest.fixture
 def sample_cells():
@@ -63,16 +63,28 @@ def sample_cells():
 def sample_spatial_results():
     """Create a sample spatial results dict for testing."""
     return {
-        "graph": np.array([
-            [0, 1, 0, 0, 0],
-            [1, 0, 1, 0, 0],
-            [0, 1, 0, 1, 0],
-            [0, 0, 1, 0, 1],
-            [0, 0, 0, 1, 0],
-        ]),
+        "graph": np.array(
+            [
+                [0, 1, 0, 0, 0],
+                [1, 0, 1, 0, 0],
+                [0, 1, 0, 1, 0],
+                [0, 0, 1, 0, 1],
+                [0, 0, 0, 1, 0],
+            ]
+        ),
         "type_pairs": [
-            {"pair": "Neoplastic <-> Inflammatory", "mean_dist": 45.2, "min_dist": 30.1, "n_pairs": 10},
-            {"pair": "Inflammatory <-> Connective", "mean_dist": 52.8, "min_dist": 35.4, "n_pairs": 8},
+            {
+                "pair": "Neoplastic <-> Inflammatory",
+                "mean_dist": 45.2,
+                "min_dist": 30.1,
+                "n_pairs": 10,
+            },
+            {
+                "pair": "Inflammatory <-> Connective",
+                "mean_dist": 52.8,
+                "min_dist": 35.4,
+                "n_pairs": 8,
+            },
             {"pair": "Connective <-> Dead", "mean_dist": 48.3, "min_dist": 32.7, "n_pairs": 12},
             {"pair": "Dead <-> Epithelial", "mean_dist": 55.1, "min_dist": 40.2, "n_pairs": 6},
         ],
@@ -87,6 +99,7 @@ def sample_spatial_results():
 
 
 # --- Test styles ---
+
 
 def test_cell_colors_defined():
     """Test that CELL_COLORS is properly defined."""
@@ -107,6 +120,7 @@ def test_okabe_ito_colors_defined():
 
 
 # --- Test chart builders ---
+
 
 def test_build_confidence_histogram(sample_cells):
     """Test that build_confidence_histogram returns a valid Plotly figure."""
@@ -146,7 +160,7 @@ def test_build_network_graph(sample_spatial_results, sample_cells):
     assert "Spatial Proximity Network" in fig.layout.title.text
 
 
-def test_build_network_graph_no_graph():
+def test_build_network_graph_no_graph(sample_cells):
     """Test that build_network_graph returns None when no graph data."""
     assert build_network_graph({}, sample_cells) is None
     assert build_network_graph({"graph": None}, sample_cells) is None

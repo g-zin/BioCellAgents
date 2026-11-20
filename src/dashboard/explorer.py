@@ -8,8 +8,8 @@ import pandas as pd
 import plotly.graph_objects as go
 import streamlit as st
 
-from src.data.dataset import CELL_TYPES
 from src.dashboard.styles import CELL_COLORS
+from src.data.dataset import CELL_TYPES
 
 
 def render_cell_explorer(cells: list) -> None:
@@ -91,14 +91,16 @@ def render_cell_explorer(cells: list) -> None:
     for cell in filtered_cells:
         bbox = cell["bbox"]
         area = (bbox[2] - bbox[0]) * (bbox[3] - bbox[1])
-        rows.append({
-            "ID": cell["cell_id"],
-            "Class": cell["class_name"],
-            "Confidence": f"{cell['confidence']:.3f}",
-            "Area (px\u00b2)": int(area),
-            "Centroid X": int(cell["centroid"][0]),
-            "Centroid Y": int(cell["centroid"][1]),
-        })
+        rows.append(
+            {
+                "ID": cell["cell_id"],
+                "Class": cell["class_name"],
+                "Confidence": f"{cell['confidence']:.3f}",
+                "Area (px\u00b2)": int(area),
+                "Centroid X": int(cell["centroid"][0]),
+                "Centroid Y": int(cell["centroid"][1]),
+            }
+        )
     df = pd.DataFrame(rows)
     st.dataframe(df, use_container_width=True, height=400, hide_index=True)
 
@@ -111,11 +113,16 @@ def render_cell_explorer(cells: list) -> None:
             continue
         xs = [c["centroid"][0] for c in subset]
         ys = [c["centroid"][1] for c in subset]
-        fig.add_trace(go.Scatter(
-            x=xs, y=ys, mode="markers", name=ct,
-            marker=dict(size=8, color=CELL_COLORS.get(ct, "#888")),
-            text=[f"{c['cell_id']} ({c['confidence']:.0%})" for c in subset],
-        ))
+        fig.add_trace(
+            go.Scatter(
+                x=xs,
+                y=ys,
+                mode="markers",
+                name=ct,
+                marker=dict(size=8, color=CELL_COLORS.get(ct, "#888")),
+                text=[f"{c['cell_id']} ({c['confidence']:.0%})" for c in subset],
+            )
+        )
     fig.update_layout(
         title="Filtered Cell Distribution",
         paper_bgcolor="rgba(0,0,0,0)",

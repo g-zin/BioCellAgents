@@ -33,11 +33,9 @@ import torch.nn.functional as F
 # ``deeplabv3_resnet50`` lives in ``torchvision.models.segmentation`` in recent
 # releases but was exposed at the top level in older ones -- support both.
 try:
-    from torchvision.models.segmentation import deeplabv3_resnet50
-    from torchvision.models.segmentation import DeepLabV3_ResNet50_Weights
+    from torchvision.models.segmentation import DeepLabV3_ResNet50_Weights, deeplabv3_resnet50
 except ImportError:  # pragma: no cover - older torchvision layout
-    from torchvision.models import deeplabv3_resnet50
-    from torchvision.models import DeepLabV3_ResNet50_Weights
+    from torchvision.models import DeepLabV3_ResNet50_Weights, deeplabv3_resnet50
 
 
 class DeepLabV3PlusSegmenter(nn.Module):
@@ -92,10 +90,11 @@ class DeepLabV3PlusSegmenter(nn.Module):
             if isinstance(module, nn.Conv2d):
                 last_conv_idx = i
         if last_conv_idx is None:
-            raise RuntimeError(
-                "Could not find a Conv2d in the DeepLabV3+ head to replace."
-            )
-        in_channels = self.head[last_conv_idx].in_channels
+            raise RuntimeError("Could not find a Conv2d in the DeepLabV3+ head to replace.")
+        last_conv = self.head[last_conv_idx]
+        if not isinstance(last_conv, nn.Conv2d):
+            raise RuntimeError("Expected nn.Conv2d at last_conv_idx.")
+        in_channels = last_conv.in_channels
         self.head[last_conv_idx] = nn.Conv2d(in_channels, num_classes, kernel_size=1)
 
         # Make the model safe for batch_size=1 training (see helper below).
@@ -175,6 +174,5 @@ def build_segmenter(
             freeze_backbone=freeze_backbone,
         )
     raise ValueError(
-        f"Unknown segmentation architecture '{arch}'. "
-        f"Choose from: deeplabv3plus, dinov2"
+        f"Unknown segmentation architecture '{arch}'. " f"Choose from: deeplabv3plus, dinov2"
     )

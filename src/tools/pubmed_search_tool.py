@@ -7,13 +7,13 @@ No API key required. Free access.
 """
 
 import json
-import time
 import re
-from typing import Type, Dict, Any, List, Optional
+import time
+from typing import Any, Dict, List, Optional, Type, Union
 
 import requests
-from pydantic import BaseModel, Field
 from crewai.tools import BaseTool
+from pydantic import BaseModel, Field
 
 # -- API Endpoints ----------------------------------------------------------
 PUBMED_ESEARCH = "https://eutils.ncbi.nlm.nih.gov/entrez/eutils/esearch.fcgi"
@@ -54,7 +54,9 @@ TME_KEYWORDS = {
 }
 
 
-def build_pubmed_query(organ: str, tme_phenotype: str, extra_terms: List[str] = None) -> str:
+def build_pubmed_query(
+    organ: str, tme_phenotype: str, extra_terms: Optional[List[str]] = None
+) -> str:
     """Build a structured PubMed search query from classification results."""
     organ_terms = ORGAN_KEYWORDS.get(organ.lower(), [organ.replace("_", " ")])
     tme_terms = TME_KEYWORDS.get(tme_phenotype.lower(), ["tumor microenvironment"])
@@ -68,10 +70,14 @@ def build_pubmed_query(organ: str, tme_phenotype: str, extra_terms: List[str] = 
 
 def search_pubmed(query: str, retmax: int = 10) -> List[Dict[str, Any]]:
     """Search PubMed and return structured article metadata."""
-    params = {
-        "db": "pubmed", "term": query, "retmax": retmax,
-        "retmode": "json", "sort": "relevance",
-        "mindate": "2015/01/01", "maxdate": "2026/12/31",
+    params: Dict[str, Union[str, int]] = {
+        "db": "pubmed",
+        "term": query,
+        "retmax": retmax,
+        "retmode": "json",
+        "sort": "relevance",
+        "mindate": "2015/01/01",
+        "maxdate": "2026/12/31",
     }
     try:
         resp = requests.get(PUBMED_ESEARCH, params=params, timeout=15)
@@ -92,13 +98,17 @@ def search_pubmed(query: str, retmax: int = 10) -> List[Dict[str, Any]]:
                 continue
             authors = [a.get("name", "") for a in art.get("authors", [])]
             author_str = ", ".join(authors[:3]) + (", et al." if len(authors) > 3 else "")
-            results.append({
-                "pmid": pmid, "title": art.get("title", "Unknown"),
-                "authors": author_str,
-                "journal": art.get("fulljournalname", art.get("source", "Unknown")),
-                "year": art.get("pubdate", "")[:4] or "N/A",
-                "abstract": art.get("abstract", ""), "source": "PubMed",
-            })
+            results.append(
+                {
+                    "pmid": pmid,
+                    "title": art.get("title", "Unknown"),
+                    "authors": author_str,
+                    "journal": art.get("fulljournalname", art.get("source", "Unknown")),
+                    "year": art.get("pubdate", "")[:4] or "N/A",
+                    "abstract": art.get("abstract", ""),
+                    "source": "PubMed",
+                }
+            )
         return results
     except Exception as e:
         print(f"[WARN] PubMed search failed: {e}")
@@ -107,9 +117,12 @@ def search_pubmed(query: str, retmax: int = 10) -> List[Dict[str, Any]]:
 
 def search_europe_pmc(query: str, retmax: int = 10) -> List[Dict[str, Any]]:
     """Search Europe PMC and return articles with full-text where available."""
-    params = {
-        "query": query, "format": "json", "pageSize": retmax,
-        "resultType": "core", "sort": "RELEVANCE",
+    params: Dict[str, Union[str, int]] = {
+        "query": query,
+        "format": "json",
+        "pageSize": retmax,
+        "resultType": "core",
+        "sort": "RELEVANCE",
     }
     try:
         resp = requests.get(EUROPE_PMC_SEARCH, params=params, timeout=15)
@@ -133,17 +146,23 @@ def search_europe_pmc(query: str, retmax: int = 10) -> List[Dict[str, Any]]:
                         full_text_snippet = text[:2000]
                 except Exception:
                     pass
-            results.append({
-                "pmid": pmid, "pmcid": pmcid, "doi": doi,
-                "title": art.get("title", "Unknown"),
-                "authors": art.get("authorString", "Unknown"),
-                "journal": art.get("journalTitle", art.get("journal", {}).get("title", "Unknown")),
-                "year": str(art.get("pubYear", "N/A")),
-                "abstract": art.get("abstractInfo", {}).get("abstractText", ""),
-                "full_text_snippet": full_text_snippet,
-                "isOpenAccess": art.get("isOpenAccess", "N"),
-                "source": "Europe PMC",
-            })
+            results.append(
+                {
+                    "pmid": pmid,
+                    "pmcid": pmcid,
+                    "doi": doi,
+                    "title": art.get("title", "Unknown"),
+                    "authors": art.get("authorString", "Unknown"),
+                    "journal": art.get(
+                        "journalTitle", art.get("journal", {}).get("title", "Unknown")
+                    ),
+                    "year": str(art.get("pubYear", "N/A")),
+                    "abstract": art.get("abstractInfo", {}).get("abstractText", ""),
+                    "full_text_snippet": full_text_snippet,
+                    "isOpenAccess": art.get("isOpenAccess", "N"),
+                    "source": "Europe PMC",
+                }
+            )
         return results
     except Exception as e:
         print(f"[WARN] Europe PMC search failed: {e}")
@@ -166,7 +185,9 @@ def merge_results(pubmed_results: List[Dict], epmc_results: List[Dict]) -> List[
             merged.append(r)
         else:
             for m in merged:
-                if (m.get("pmid") and m["pmid"] == r.get("pmid")) or m.get("title", "").lower() == r.get("title", "").lower():
+                if (m.get("pmid") and m["pmid"] == r.get("pmid")) or m.get(
+                    "title", ""
+                ).lower() == r.get("title", "").lower():
                     if r.get("full_text_snippet") and not m.get("full_text_snippet"):
                         m["full_text_snippet"] = r["full_text_snippet"]
                     if r.get("doi") and not m.get("doi"):
@@ -177,18 +198,22 @@ def merge_results(pubmed_results: List[Dict], epmc_results: List[Dict]) -> List[
 
 # -- CrewAI Tool --------------------------------------------------------------
 
+
 class LiteratureSearchInput(BaseModel):
     """Input arguments for the Literature Evidence Search Tool."""
+
     query: str = Field(
         description=(
             "Search query or classification context. Can be a free-text query "
             "or JSON with organ, tme_phenotype fields. "
             "Examples: 'immune desert head and neck squamous cell carcinoma spatial topology', "
-            "'{\"organ\": \"head_and_neck\", \"tme_phenotype\": \"immune_desert\"}'"
+            '\'{"organ": "head_and_neck", "tme_phenotype": "immune_desert"}\''
         )
     )
     top_k: int = Field(
-        default=5, ge=1, le=20,
+        default=5,
+        ge=1,
+        le=20,
         description="Number of top relevant papers to retrieve (default 5, max 20)",
     )
 
@@ -211,7 +236,7 @@ class LiteratureSearchTool(BaseTool):
         """Execute a literature search across PubMed and Europe PMC."""
         organ = "unknown"
         tme_phenotype = "unknown"
-        extra_terms = []
+        extra_terms: List[str] = []
 
         try:
             parsed = json.loads(query)
@@ -235,11 +260,12 @@ class LiteratureSearchTool(BaseTool):
             return {
                 "status": "no_results",
                 "message": f"No relevant literature found for: '{search_query}'",
-                "results": [], "total_found": 0,
+                "results": [],
+                "total_found": 0,
                 "sources_searched": ["PubMed", "Europe PMC"],
             }
 
-        formatted = []
+        formatted: List[Dict[str, Any]] = []
         for i, paper in enumerate(merged, 1):
             citation = (
                 f"{paper.get('authors', 'Unknown')} ({paper.get('year', 'N/A')}). "
@@ -247,7 +273,8 @@ class LiteratureSearchTool(BaseTool):
                 f"{paper.get('journal', 'Unknown')}. PMID: {paper.get('pmid', 'N/A')}."
             )
             entry = {
-                "rank": i, "citation": citation,
+                "rank": i,
+                "citation": citation,
                 "pmid": paper.get("pmid", "N/A"),
                 "title": paper.get("title", "Unknown"),
                 "authors": paper.get("authors", "Unknown"),
@@ -263,8 +290,10 @@ class LiteratureSearchTool(BaseTool):
             formatted.append(entry)
 
         return {
-            "status": "success", "query": search_query,
-            "results": formatted, "total_found": len(formatted),
+            "status": "success",
+            "query": search_query,
+            "results": formatted,
+            "total_found": len(formatted),
             "sources_searched": ["PubMed", "Europe PMC"],
         }
 
@@ -272,7 +301,6 @@ class LiteratureSearchTool(BaseTool):
 if __name__ == "__main__":
     tool = LiteratureSearchTool()
     result = tool._run(
-        query="immune desert head and neck squamous cell carcinoma spatial topology",
-        top_k=3
+        query="immune desert head and neck squamous cell carcinoma spatial topology", top_k=3
     )
     print(json.dumps(result, indent=2))

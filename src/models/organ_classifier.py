@@ -1,8 +1,9 @@
-from typing import Optional, Tuple, Union
+from typing import Tuple, Union
+
 import torch
 import torch.nn as nn
-from torchvision.models import efficientnet_b0 as efficientnet
 from torchvision import transforms
+from torchvision.models import efficientnet_b0 as efficientnet
 
 
 class OrganClassifier(nn.Module):
@@ -34,11 +35,13 @@ class OrganClassifier(nn.Module):
 
     def get_transforms(self):
         """Returns the standard ImageNet pre-processing transforms for this backbone."""
-        return transforms.Compose([
-            transforms.Resize((224, 224)),
-            transforms.ToTensor(),
-            transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]),
-        ])
+        return transforms.Compose(
+            [
+                transforms.Resize((224, 224)),
+                transforms.ToTensor(),
+                transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]),
+            ]
+        )
 
     def unfreeze_backbone(self, unfreeze: bool = True):
         """Dynamically toggles grad status for fine-tuning backbones post-warmup."""

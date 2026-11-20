@@ -1,10 +1,8 @@
 """Unit tests for BioCellAgents inference metrics."""
+
 import json
 import tempfile
 from pathlib import Path
-
-import numpy as np
-import pytest
 
 
 class TestComputeMetrics:
@@ -12,6 +10,7 @@ class TestComputeMetrics:
 
     def test_perfect_predictions(self):
         from src.inference.metrics import compute_metrics
+
         predictions = [0, 1, 2, 3]
         ground_truth = [0, 1, 2, 3]
         class_names = ["A", "B", "C", "D"]
@@ -25,6 +24,7 @@ class TestComputeMetrics:
 
     def test_all_wrong_predictions(self):
         from src.inference.metrics import compute_metrics
+
         predictions = [1, 0, 3, 2]
         ground_truth = [0, 1, 2, 3]
         class_names = ["A", "B", "C", "D"]
@@ -33,6 +33,7 @@ class TestComputeMetrics:
 
     def test_partial_correct(self):
         from src.inference.metrics import compute_metrics
+
         predictions = [0, 1, 2, 0]
         ground_truth = [0, 1, 2, 3]
         class_names = ["A", "B", "C", "D"]
@@ -41,6 +42,7 @@ class TestComputeMetrics:
 
     def test_confusion_matrix_shape(self):
         from src.inference.metrics import compute_metrics
+
         predictions = [0, 1, 2]
         ground_truth = [0, 1, 2]
         class_names = ["A", "B", "C"]
@@ -51,6 +53,7 @@ class TestComputeMetrics:
 
     def test_single_class(self):
         from src.inference.metrics import compute_metrics
+
         predictions = [0, 0, 0]
         ground_truth = [0, 0, 0]
         class_names = ["Only"]
@@ -59,6 +62,7 @@ class TestComputeMetrics:
 
     def test_imbalanced_classes(self):
         from src.inference.metrics import compute_metrics
+
         predictions = [0, 0, 0, 0, 1, 1, 1, 1, 1, 1]
         ground_truth = [0, 0, 0, 0, 0, 1, 1, 1, 1, 1]
         class_names = ["Neg", "Pos"]
@@ -72,6 +76,7 @@ class TestSaveResults:
 
     def test_save_and_load(self):
         from src.inference.metrics import save_results
+
         results = {"accuracy": 0.95, "macro_f1": 0.92, "per_class": {"A": {"precision": 0.9}}}
         with tempfile.TemporaryDirectory() as tmpdir:
             path = str(Path(tmpdir) / "subdir" / "results.json")
@@ -83,6 +88,7 @@ class TestSaveResults:
 
     def test_creates_parent_dirs(self):
         from src.inference.metrics import save_results
+
         results = {"test": 1}
         with tempfile.TemporaryDirectory() as tmpdir:
             path = str(Path(tmpdir) / "a" / "b" / "c" / "out.json")

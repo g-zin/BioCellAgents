@@ -1,9 +1,10 @@
-from pathlib import Path
-from typing import Any, Dict, List, Tuple, Union
 import warnings
+from pathlib import Path
+from typing import Any, Dict, List, Union
+
+import cv2
 import numpy as np
 from scipy import ndimage
-import cv2
 
 warnings.warn(
     "NucleiSegmenter (StarDist-based) is deprecated. "
@@ -38,17 +39,13 @@ def parse_fold_masks(fold_dir: Union[str, Path], patch_index: int) -> Dict[str, 
             first_key = list(data.keys())[0]
             mask_patch = data[first_key][patch_idx]
         else:
-            return {
-                "error": f"Could not locate masks file at: {mask_file.resolve()}"
-            }
+            return {"error": f"Could not locate masks file at: {mask_file.resolve()}"}
     else:
         masks = np.load(mask_file, mmap_mode="r")
         mask_patch = masks[patch_idx]
 
     centroids: List[Dict[str, Any]] = []
-    counts_by_class: Dict[str, int] = {
-        cls_name: 0 for cls_name in PANNUKE_CLASSES
-    }
+    counts_by_class: Dict[str, int] = {cls_name: 0 for cls_name in PANNUKE_CLASSES}
     cell_id = 1
 
     # 2. Extract cell instances using native PanNuke instance IDs (Shape: 256 x 256 x 6)
@@ -66,13 +63,15 @@ def parse_fold_masks(fold_dir: Union[str, Path], patch_index: int) -> Dict[str, 
                     cy = float(np.mean(ys))
                     cx = float(np.mean(xs))
 
-                    centroids.append({
-                        "id": cell_id,
-                        "y": cy,  # Standardized array row coordinate (y)
-                        "x": cx,  # Standardized array column coordinate (x)
-                        "class": class_name,
-                        "area_px": int(area),
-                    })
+                    centroids.append(
+                        {
+                            "id": cell_id,
+                            "y": cy,  # Standardized array row coordinate (y)
+                            "x": cx,  # Standardized array column coordinate (x)
+                            "class": class_name,
+                            "area_px": int(area),
+                        }
+                    )
                     counts_by_class[class_name] += 1
                     cell_id += 1
     else:
@@ -91,13 +90,15 @@ def parse_fold_masks(fold_dir: Union[str, Path], patch_index: int) -> Dict[str, 
                         cy = float(np.mean(ys))
                         cx = float(np.mean(xs))
 
-                        centroids.append({
-                            "id": cell_id,
-                            "y": cy,  # Standardized array row coordinate (y)
-                            "x": cx,  # Standardized array column coordinate (x)
-                            "class": "Unknown",
-                            "area_px": area,
-                        })
+                        centroids.append(
+                            {
+                                "id": cell_id,
+                                "y": cy,  # Standardized array row coordinate (y)
+                                "x": cx,  # Standardized array column coordinate (x)
+                                "class": "Unknown",
+                                "area_px": area,
+                            }
+                        )
                         cell_id += 1
 
     return {
@@ -109,7 +110,7 @@ def parse_fold_masks(fold_dir: Union[str, Path], patch_index: int) -> Dict[str, 
 
 class NucleiSegmenter:
     """STEP 1: Segments cells from masks/images -> extracts centroids and individual cell masks.
-    
+
     Pipeline:
     1. segment_from_mask(mask) -> centroids + cell masks
     2. get_all_cell_crops(image, centroids) -> individual cell crops (48x48)
@@ -125,17 +126,15 @@ class NucleiSegmenter:
         if self.stardist_model is None:
             from stardist.models import StarDist2D
 
-            print(
-                "Loading pre-trained StarDist2D model ('2D_versatile_he')..."
-            )
+            print("Loading pre-trained StarDist2D model ('2D_versatile_he')...")
             self.stardist_model = StarDist2D.from_pretrained("2D_versatile_he")
 
     def segment_from_mask(self, mask_patch: np.ndarray) -> Dict[str, Any]:
         """STEP 1A: Segment cells from PanNuke ground-truth mask.
-        
+
         Args:
             mask_patch: Multi-channel mask array (H x W x C) where C >= 5 for PanNuke classes
-        
+
         Returns:
             - centroids: List[Dict] with id, y, x, class, area_px
             - cell_masks: Dict[cell_id -> binary mask]
@@ -157,15 +156,17 @@ class NucleiSegmenter:
                     if area >= 5:
                         cy = float(np.mean(ys))
                         cx = float(np.mean(xs))
-                        
-                        centroids.append({
-                            "id": cell_id,
-                            "y": cy,
-                            "x": cx,
-                            "class": PANNUKE_CLASSES[c],
-                            "area_px": int(area)
-                        })
-                        
+
+                        centroids.append(
+                            {
+                                "id": cell_id,
+                                "y": cy,
+                                "x": cx,
+                                "class": PANNUKE_CLASSES[c],
+                                "area_px": int(area),
+                            }
+                        )
+
                         cell_binary_mask = np.zeros_like(channel_mask, dtype=np.uint8)
                         cell_binary_mask[channel_mask == inst_id] = 1
                         cell_masks[cell_id] = cell_binary_mask
@@ -173,20 +174,22 @@ class NucleiSegmenter:
         else:
             combined_mask = (mask_patch > 0).astype(np.uint8)
             labeled_array, num_features = ndimage.label(combined_mask)
-            
+
             if num_features > 0:
                 for i in range(1, num_features + 1):
                     ys, xs = np.where(labeled_array == i)
                     area = len(ys)
                     if area >= 5:
-                        centroids.append({
-                            "id": cell_id,
-                            "y": float(np.mean(ys)),
-                            "x": float(np.mean(xs)),
-                            "class": "Unknown",
-                            "area_px": int(area)
-                        })
-                        
+                        centroids.append(
+                            {
+                                "id": cell_id,
+                                "y": float(np.mean(ys)),
+                                "x": float(np.mean(xs)),
+                                "class": "Unknown",
+                                "area_px": int(area),
+                            }
+                        )
+
                         cell_binary_mask = np.zeros_like(labeled_array, dtype=np.uint8)
                         cell_binary_mask[labeled_array == i] = 1
                         cell_masks[cell_id] = cell_binary_mask
@@ -196,16 +199,17 @@ class NucleiSegmenter:
 
     def segment_raw_image(self, rgb_image: np.ndarray) -> Dict[str, Any]:
         """STEP 1B: Segment cells from raw H&E image using StarDist.
-        
+
         Args:
             rgb_image: RGB image array (H x W x 3)
-        
+
         Returns:
             - centroids: List[Dict] with id, y, x, class, area_px
             - cell_masks: Dict[cell_id -> binary mask]
             - labels: Labeled segmentation map
         """
         self._init_stardist()
+        assert self.stardist_model is not None
         from csbdeep.utils import normalize
 
         normalized_img = normalize(rgb_image)
@@ -213,29 +217,38 @@ class NucleiSegmenter:
 
         centroids: List[Dict[str, Any]] = []
         cell_masks: Dict[int, np.ndarray] = {}
-        
+
         if "points" in details:
             for cell_id, pt in enumerate(details["points"], 1):
-                centroids.append({
-                    "id": cell_id,
-                    "y": float(pt[0]),
-                    "x": float(pt[1]),
-                    "class": "Unknown",
-                    "area_px": -1
-                })
+                centroids.append(
+                    {
+                        "id": cell_id,
+                        "y": float(pt[0]),
+                        "x": float(pt[1]),
+                        "class": "Unknown",
+                        "area_px": -1,
+                    }
+                )
                 cell_binary_mask = (labels == cell_id).astype(np.uint8)
                 cell_masks[cell_id] = cell_binary_mask
 
-        return {"centroids": centroids, "cell_masks": cell_masks, "count": len(centroids), "labels": labels}
+        return {
+            "centroids": centroids,
+            "cell_masks": cell_masks,
+            "count": len(centroids),
+            "labels": labels,
+        }
 
-    def get_cell_crop(self, centroid: Dict[str, Any], image: np.ndarray, crop_size: int = 48) -> np.ndarray:
+    def get_cell_crop(
+        self, centroid: Dict[str, Any], image: np.ndarray, crop_size: int = 48
+    ) -> np.ndarray:
         """STEP 2: Extract a fixed-size square crop around a cell centroid.
-        
+
         Args:
             centroid: Dict with 'y', 'x' keys (as returned by segment_from_mask)
             image: Input image (H x W x C)
             crop_size: Output crop size (default 48x48)
-        
+
         Returns:
             Cropped patch (crop_size x crop_size x C)
         """
@@ -256,28 +269,34 @@ class NucleiSegmenter:
         crop = image[y1:y2, x1:x2]
 
         if pad_top > 0 or pad_bottom > 0 or pad_left > 0 or pad_right > 0:
-            crop = cv2.copyMakeBorder(crop, pad_top, pad_bottom, pad_left, pad_right, cv2.BORDER_REFLECT)
+            crop = cv2.copyMakeBorder(
+                crop, pad_top, pad_bottom, pad_left, pad_right, cv2.BORDER_REFLECT
+            )
 
         return crop
 
-    def get_all_cell_crops(self, image: np.ndarray, centroids: List[Dict[str, Any]], crop_size: int = 48) -> List[Dict[str, Any]]:
+    def get_all_cell_crops(
+        self, image: np.ndarray, centroids: List[Dict[str, Any]], crop_size: int = 48
+    ) -> List[Dict[str, Any]]:
         """STEP 2: Extract crops for all cells from an image.
-        
+
         Args:
             image: Input image (H x W x C)
             centroids: List of centroid dicts (as returned by segment_from_mask)
             crop_size: Size of the square crop
-        
+
         Returns:
             List of dicts with 'id', 'crop', 'centroid', 'class' - ready for DINOv2CellClassifier
         """
         crops = []
         for centroid in centroids:
             crop = self.get_cell_crop(centroid, image, crop_size)
-            crops.append({
-                "id": centroid["id"],
-                "crop": crop,
-                "centroid": centroid,
-                "class": centroid.get("class", "Unknown")
-            })
+            crops.append(
+                {
+                    "id": centroid["id"],
+                    "crop": crop,
+                    "centroid": centroid,
+                    "class": centroid.get("class", "Unknown"),
+                }
+            )
         return crops

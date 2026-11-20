@@ -9,16 +9,17 @@ produce the `precomputed_results` payload expected by the CrewAI tasks.
 import json
 import time
 from pathlib import Path
+from typing import Any, Dict, List, Optional, Tuple
 
 import numpy as np
 import torch
 
 from src.data.dataset import ORGAN_TYPES
-from src.models.organ_classifier import OrganClassifier
 from src.inference.calibration import TemperatureScaler
-from src.models.cell_detector import TrainedCellDetector
-from src.tools.graph_analytics import SpatialGraphAnalytics
 from src.inference.validity_gate import ValidityGate
+from src.models.cell_detector import TrainedCellDetector
+from src.models.organ_classifier import OrganClassifier
+from src.tools.graph_analytics import SpatialGraphAnalytics
 
 # --- Constants (mirrors biocell_app.py) ---
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
@@ -28,11 +29,11 @@ SEGMENTER_CKPT = "checkpoints/segmentation_vits14/best_segmentation_model.pt"
 CLASSIFIER_CKPT = "checkpoints/cell_vits14/best_model.pt"
 
 # --- Module-level model caches (avoid re-loading on repeated calls) ---
-_organ_model_cache: tuple | None = None
-_cell_detector_cache: TrainedCellDetector | None = None
+_organ_model_cache: Optional[Tuple[OrganClassifier, torch.device]] = None
+_cell_detector_cache: Optional[TrainedCellDetector] = None
 
 
-def get_organ_classifier() -> tuple[OrganClassifier, torch.device]:
+def get_organ_classifier() -> Tuple[OrganClassifier, torch.device]:
     """Load (or return cached) organ classifier model."""
     global _organ_model_cache
     if _organ_model_cache is not None:
@@ -63,7 +64,7 @@ def get_cell_detector() -> TrainedCellDetector:
 
 
 # --- Data loading ---
-def load_patch(fold_dir: str, patch_index: int) -> tuple[np.ndarray, str]:
+def load_patch(fold_dir: str, patch_index: int) -> Tuple[np.ndarray, str]:
     """Load H&E image patch + tissue label from .npy files.
 
     Returns:
@@ -82,7 +83,11 @@ def load_patch(fold_dir: str, patch_index: int) -> tuple[np.ndarray, str]:
         raw_img = (raw_img * 255).astype(np.uint8)
     else:
         raw_img = raw_img.astype(np.uint8)
-    tissue = str(np.load(tissues_path, allow_pickle=True)[patch_index]) if tissues_path.exists() else "Unknown"
+    tissue = (
+        str(np.load(tissues_path, allow_pickle=True)[patch_index])
+        if tissues_path.exists()
+        else "Unknown"
+    )
     return raw_img, tissue
 
 
@@ -92,12 +97,15 @@ def run_organ_classification(image: np.ndarray) -> dict:
     t0 = time.time()
     model, device = get_organ_classifier()
     from torchvision import transforms
-    transform = transforms.Compose([
-        transforms.ToPILImage(),
-        transforms.Resize((224, 224)),
-        transforms.ToTensor(),
-        transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]),
-    ])
+
+    transform = transforms.Compose(
+        [
+            transforms.ToPILImage(),
+            transforms.Resize((224, 224)),
+            transforms.ToTensor(),
+            transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]),
+        ]
+    )
     tensor = transform(image).unsqueeze(0).to(device)
     with torch.no_grad():
         logits = model(tensor)
@@ -105,10 +113,10 @@ def run_organ_classification(image: np.ndarray) -> dict:
     calibrated = scaler.calibrate(logits[0])
     top3_probs, top3_idx = torch.topk(calibrated, k=3)
     return {
-        "predicted_organ": ORGAN_TYPES[top3_idx[0].item()],
+        "predicted_organ": ORGAN_TYPES[int(top3_idx[0].item())],
         "confidence": float(top3_probs[0].cpu().numpy()),
         "top3": [
-            {"organ": ORGAN_TYPES[i.item()], "confidence": round(float(p.cpu().numpy()), 4)}
+            {"organ": ORGAN_TYPES[int(i.item())], "confidence": round(float(p.cpu().numpy()), 4)}
             for p, i in zip(top3_probs, top3_idx)
         ],
         "temperature": scaler.temperature,
@@ -163,7 +171,7 @@ def build_precomputed_results(fold_dir: str, patch_index: int) -> str:
     print(f"[pipeline]   → {cell_result['total_cells']} cells detected")
 
     # Assemble the results dict (same structure as biocell_app.py)
-    results = {
+    results: Dict[str, Any] = {
         "patch_index": patch_index,
         "fold_dir": fold_dir,
         "ground_truth_organ": tissue,
@@ -174,17 +182,23 @@ def build_precomputed_results(fold_dir: str, patch_index: int) -> str:
     # -- Pre-retrieval: Inject literature evidence (PubMed + Europe PMC) --
     try:
         from src.tools.pubmed_search_tool import LiteratureSearchTool
+
         lit_tool = LiteratureSearchTool()
         organ = organ_result.get("predicted_organ", "unknown")
         class_counts = cell_result.get("class_counts", {}) or {}
-        dominant_cell = max(class_counts, key=class_counts.get) if class_counts else None
+        dominant_cell = max(class_counts, key=lambda k: class_counts[k]) if class_counts else None
 
-        terms = []
+        terms: List[str] = []
         if organ and organ.lower() != "unknown":
             terms.append(organ.replace("_", " "))
         if dominant_cell:
             terms.append(f"{dominant_cell.lower()}-rich")
-        terms += ["tumor microenvironment", "spatial topology", "immune infiltration", "classification"]
+        terms += [
+            "tumor microenvironment",
+            "spatial topology",
+            "immune infiltration",
+            "classification",
+        ]
         query = " ".join(terms)
         lit_result = lit_tool._run(query=query, top_k=5)
         if lit_result.get("status") == "success" and lit_result.get("results"):

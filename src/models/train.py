@@ -1,19 +1,13 @@
-import sys
+import argparse
 from pathlib import Path
 
-# Resolve project root (BioCellAgents/)
-PROJECT_ROOT = Path(__file__).resolve().parents[2]
-if str(PROJECT_ROOT) not in sys.path:
-    sys.path.insert(0, str(PROJECT_ROOT))
-
-import argparse
 import torch
 from torch.utils.data import DataLoader
 
-from src.data.dataset import PanNukeSegmentationDataset, CELL_TYPES
-from src.models.segmentation import build_segmenter
-from src.models.losses import CombinedSegmentationLoss
+from src.data.dataset import CELL_TYPES, PanNukeSegmentationDataset
 from src.models.base_trainer import BaseTrainer
+from src.models.losses import CombinedSegmentationLoss
+from src.models.segmentation import build_segmenter
 
 
 def parse_fold_arg(fold_arg):
@@ -39,11 +33,17 @@ def main():
     parser.add_argument("--backbone_lr", type=float, default=1e-5)
     parser.add_argument("--head_lr", type=float, default=3e-4)
     parser.add_argument("--freeze_backbone", action="store_true")
-    parser.add_argument("--model_size", type=str, default="vits14", choices=["vits14", "vitb14", "vitl14"])
-    parser.add_argument("--arch", type=str, default="deeplabv3plus",
-                        choices=["deeplabv3plus", "dinov2"],
-                        help="Segmentation architecture: 'deeplabv3plus' (SOTA dense-prediction, default) "
-                             "or 'dinov2' (legacy ViT patch-token segmenter)")
+    parser.add_argument(
+        "--model_size", type=str, default="vits14", choices=["vits14", "vitb14", "vitl14"]
+    )
+    parser.add_argument(
+        "--arch",
+        type=str,
+        default="deeplabv3plus",
+        choices=["deeplabv3plus", "dinov2"],
+        help="Segmentation architecture: 'deeplabv3plus' (SOTA dense-prediction, default) "
+        "or 'dinov2' (legacy ViT patch-token segmenter)",
+    )
     parser.add_argument("--output_dir", type=str, default="checkpoints")
     parser.add_argument("--num_workers", type=int, default=0)
     args = parser.parse_args()
@@ -54,22 +54,26 @@ def main():
     train_folds = parse_fold_arg(args.train_fold)
     val_folds = parse_fold_arg(args.val_fold)
 
-    train_dataset = PanNukeSegmentationDataset(metadata_path=args.metadata_path, fold=train_folds, is_train=True)
-    val_dataset = PanNukeSegmentationDataset(metadata_path=args.metadata_path, fold=val_folds, is_train=False)
+    train_dataset = PanNukeSegmentationDataset(
+        metadata_path=args.metadata_path, fold=train_folds, is_train=True
+    )
+    val_dataset = PanNukeSegmentationDataset(
+        metadata_path=args.metadata_path, fold=val_folds, is_train=False
+    )
 
     train_loader = DataLoader(
-        train_dataset, 
-        batch_size=args.batch_size, 
-        shuffle=True, 
-        num_workers=args.num_workers, 
-        pin_memory=(device.type == "cuda")
+        train_dataset,
+        batch_size=args.batch_size,
+        shuffle=True,
+        num_workers=args.num_workers,
+        pin_memory=(device.type == "cuda"),
     )
     val_loader = DataLoader(
-        val_dataset, 
-        batch_size=args.batch_size, 
-        shuffle=False, 
-        num_workers=args.num_workers, 
-        pin_memory=(device.type == "cuda")
+        val_dataset,
+        batch_size=args.batch_size,
+        shuffle=False,
+        num_workers=args.num_workers,
+        pin_memory=(device.type == "cuda"),
     )
 
     # Background (0) + 5 PanNuke cell categories (1-5)
@@ -83,9 +87,9 @@ def main():
     print(f"Segmentation architecture: {args.arch}")
 
     criterion = CombinedSegmentationLoss(ce_weight=1.0, dice_weight=1.0)
-    
+
     save_dir = Path(args.output_dir) / f"segmentation_{args.arch}"
-    
+
     # Use BaseTrainer for unified training loop
     trainer = BaseTrainer(
         model=model,
@@ -99,10 +103,12 @@ def main():
     )
     trainer._num_classes = num_classes
 
-    print(f"\nStarting Segmentation Training ({len(train_dataset)} samples) for {args.epochs} epochs...")
-    
+    print(
+        f"\nStarting Segmentation Training ({len(train_dataset)} samples) for {args.epochs} epochs..."
+    )
+
     history = trainer.train(epochs=args.epochs, metric_key="dice")
-    
+
     print(f"\nTraining complete! Best Val Mean Dice: {history['best_metric']:.4f}")
 
 

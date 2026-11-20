@@ -1,9 +1,8 @@
 """Shared evaluation metrics and result saving for BioCellAgents."""
+
 import json
 from pathlib import Path
-from typing import Dict, List, Optional
-
-import numpy as np
+from typing import Dict, List
 
 
 def compute_metrics(
@@ -12,17 +11,22 @@ def compute_metrics(
     class_names: List[str],
 ) -> Dict:
     """Compute accuracy, per-class precision/recall/F1, and confusion matrix.
-    
+
     Args:
         predictions: List of predicted class indices
         ground_truth: List of ground truth class indices
         class_names: List of class name strings
-    
+
     Returns:
         Dict with 'accuracy', 'per_class' (dict of class -> {precision, recall, f1}),
         and 'confusion_matrix' (2D list)
     """
-    from sklearn.metrics import accuracy_score, f1_score, precision_recall_fscore_support, confusion_matrix
+    from sklearn.metrics import (
+        accuracy_score,
+        confusion_matrix,
+        f1_score,
+        precision_recall_fscore_support,
+    )
 
     acc = accuracy_score(ground_truth, predictions)
     precision, recall, f1, _ = precision_recall_fscore_support(
@@ -40,7 +44,9 @@ def compute_metrics(
 
     return {
         "accuracy": round(float(acc), 4),
-        "macro_f1": round(float(f1_score(ground_truth, predictions, average="macro", zero_division=0)), 4),
+        "macro_f1": round(
+            float(f1_score(ground_truth, predictions, average="macro", zero_division=0)), 4
+        ),
         "per_class": per_class,
         "confusion_matrix": cm,
     }
@@ -48,7 +54,7 @@ def compute_metrics(
 
 def save_results(results: Dict, output_path: str) -> None:
     """Save evaluation results to a JSON file.
-    
+
     Args:
         results: Dict of metrics to save
         output_path: Path to output JSON file

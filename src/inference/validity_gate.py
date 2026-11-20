@@ -12,6 +12,7 @@ Usage:
     # result["is_valid"] -> False
     # result["warnings"] -> ["Cell count (10) is below ..."]
 """
+
 from __future__ import annotations
 
 from dataclasses import dataclass
@@ -69,9 +70,7 @@ class ValidityGate:
             ),
         }
 
-    def check_class_distribution(
-        self, counts_by_class: dict[str, int]
-    ) -> dict[str, Any]:
+    def check_class_distribution(self, counts_by_class: dict[str, int]) -> dict[str, Any]:
         """
         Check whether each cell class has a sufficient count.
 
@@ -142,9 +141,7 @@ class ValidityGate:
             all_warnings.extend(class_check["warnings"])
             all_recommendations.extend(class_check["recommendations"])
 
-        is_valid = total_check["is_valid"] and (
-            class_check["is_valid"] if class_check else True
-        )
+        is_valid = total_check["is_valid"] and (class_check["is_valid"] if class_check else True)
 
         return {
             "is_valid": is_valid,
@@ -156,9 +153,7 @@ class ValidityGate:
             "class_distribution_check": class_check,
         }
 
-    def to_prompt_context(
-        self, n_cells: int, counts_by_class: dict[str, int] | None = None
-    ) -> str:
+    def to_prompt_context(self, n_cells: int, counts_by_class: dict[str, int] | None = None) -> str:
         """
         Generate a human-readable validity context string suitable for
         inclusion in LLM tool outputs or report prompts.
@@ -177,4 +172,3 @@ class ValidityGate:
             for r in assessment["recommendations"]:
                 lines.append(f"  - RECOMMENDATION: {r}")
         return "\n".join(lines)
-

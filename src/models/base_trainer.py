@@ -3,9 +3,9 @@
 Eliminates ~200 lines of duplicated training/validation/optimizer code
 between train.py and train_complete.py.
 """
-import os
+
 from pathlib import Path
-from typing import Optional, Dict, Any
+from typing import Any, Dict, List, Optional
 
 import torch
 import torch.nn as nn
@@ -15,7 +15,7 @@ from tqdm import tqdm
 
 class BaseTrainer:
     """Base class for training BioCellAgents models.
-    
+
     Provides:
     - Differential learning rate optimizer (backbone vs head)
     - Training epoch with AMP support
@@ -54,11 +54,16 @@ class BaseTrainer:
 
         self.best_metric = 0.0
         self.global_step = 0
+        self._num_classes: Optional[int] = None
 
-    def _build_optimizer(self, backbone_lr: float, head_lr: float, weight_decay: float) -> torch.optim.Optimizer:
+    def _build_optimizer(
+        self, backbone_lr: float, head_lr: float, weight_decay: float
+    ) -> torch.optim.Optimizer:
         """Create AdamW optimizer with differential learning rates for backbone and head."""
-        decay_backbone, no_decay_backbone = [], []
-        decay_head, no_decay_head = [], []
+        decay_backbone: List[nn.Parameter] = []
+        no_decay_backbone: List[nn.Parameter] = []
+        decay_head: List[nn.Parameter] = []
+        no_decay_head: List[nn.Parameter] = []
 
         for name, param in self.model.named_parameters():
             if not param.requires_grad:
@@ -112,8 +117,11 @@ class BaseTrainer:
             pbar.set_postfix(loss=f"{running_loss / max(total_samples, 1):.4f}")
 
         return running_loss / max(total_samples, 1)
+
     @torch.no_grad()
-    def validate_epoch(self, num_classes: Optional[int] = None, description: str = "Validating") -> Dict[str, float]:
+    def validate_epoch(
+        self, num_classes: Optional[int] = None, description: str = "Validating"
+    ) -> Dict[str, float]:
         """Run validation epoch. Returns dict with 'loss', 'accuracy', and optionally 'dice'.
 
         The Dice metric is the **per-batch mean Dice**: for each batch, sum the
@@ -146,8 +154,8 @@ class BaseTrainer:
             if num_classes:
                 batch_dice = 0.0
                 for c in range(num_classes):
-                    pred_c = (preds == c)
-                    target_c = (targets == c)
+                    pred_c = preds == c
+                    target_c = targets == c
                     inter = (pred_c & target_c).sum().float()
                     union = pred_c.sum().float() + target_c.sum().float()
                     if union > 0:
@@ -165,8 +173,9 @@ class BaseTrainer:
 
         return results
 
-    def train(self, epochs: int, metric_key: str = "dice",
-              patience: int = 5, min_delta: float = 1e-3) -> Dict[str, Any]:
+    def train(
+        self, epochs: int, metric_key: str = "dice", patience: int = 5, min_delta: float = 1e-3
+    ) -> Dict[str, Any]:
         """Run full training loop with best-model checkpointing and early stopping.
 
         Args:
@@ -177,7 +186,14 @@ class BaseTrainer:
             min_delta: Minimum improvement in the metric to count as progress.
         """
         self.output_dir.mkdir(parents=True, exist_ok=True)
-        history = {"train_loss": [], "val_loss": [], "val_metric": []}
+        train_losses: List[float] = []
+        val_losses: List[float] = []
+        val_metrics: List[float] = []
+        history: Dict[str, Any] = {
+            "train_loss": train_losses,
+            "val_loss": val_losses,
+            "val_metric": val_metrics,
+        }
 
         patience_counter = 0
         best_epoch = 0
@@ -192,16 +208,15 @@ class BaseTrainer:
 
             train_loss = self.train_epoch(f"Train {epoch}/{epochs}")
             val_results = self.validate_epoch(
-                num_classes=getattr(self, '_num_classes', None),
-                description=f"Val {epoch}/{epochs}"
+                num_classes=getattr(self, "_num_classes", None), description=f"Val {epoch}/{epochs}"
             )
 
             val_loss = val_results["loss"]
             val_metric = val_results.get(metric_key, val_results.get("accuracy", 0.0))
 
-            history["train_loss"].append(train_loss)
-            history["val_loss"].append(val_loss)
-            history["val_metric"].append(val_metric)
+            train_losses.append(train_loss)
+            val_losses.append(val_loss)
+            val_metrics.append(val_metric)
 
             print(f"\n  Train Loss: {train_loss:.4f}")
             print(f"  Val Loss:   {val_loss:.4f}")
@@ -218,8 +233,10 @@ class BaseTrainer:
                 print(f"  No improvement ({patience_counter}/{patience})")
                 if patience_counter >= patience:
                     early_stopped = True
-                    print(f"\n  Early stopping triggered after {epoch} epochs "
-                          f"(no improvement for {patience} epochs)")
+                    print(
+                        f"\n  Early stopping triggered after {epoch} epochs "
+                        f"(no improvement for {patience} epochs)"
+                    )
                     break
 
         self.save_checkpoint(last_trained_epoch, is_best=False)
