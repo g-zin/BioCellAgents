@@ -129,10 +129,10 @@ class HyperparameterTuner:
         best.is_best = True
 
         if verbose:
-            print(f"\n{'='*50}")
+            print(f"\n{'=' * 50}")
             print(f"Best params: {best.params}")
             print(f"   Best {metric}: {best.score:.4f}")
-            print(f"{'='*50}")
+            print(f"{'=' * 50}")
 
         return best
 

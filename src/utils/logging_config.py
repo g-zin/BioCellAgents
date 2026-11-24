@@ -118,7 +118,7 @@ class TrainingLogger:
     def log_epoch_start(self, epoch: int, total_epochs: int) -> None:
         self._epoch_start_time = time.time()
         self.logger.info(
-            f"{'='*60}\nEpoch {epoch}/{total_epochs} [{self.task_name}]\n{'='*60}",
+            f"{'=' * 60}\nEpoch {epoch}/{total_epochs} [{self.task_name}]\n{'=' * 60}",
             extra={"epoch": epoch},
         )
 

@@ -217,9 +217,9 @@ class BaseTrainer:
 
         for epoch in range(1, epochs + 1):
             last_trained_epoch = epoch
-            print(f"\n{'='*60}")
+            print(f"\n{'=' * 60}")
             print(f"Epoch {epoch}/{epochs} [{self.task_name}]")
-            print(f"{'='*60}")
+            print(f"{'=' * 60}")
 
             train_loss = self.train_epoch(f"Train {epoch}/{epochs}")
             val_results = self.validate_epoch(
