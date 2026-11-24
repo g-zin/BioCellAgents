@@ -1,7 +1,13 @@
-"""Offline smoke and chart-builder unit tests for biocell_app and app."""
+"""Offline smoke, chart-builder, and headless Streamlit AppTest tests for biocell_app and app."""
+
+from __future__ import annotations
 
 import importlib
+import sys
+from contextlib import nullcontext
+from types import ModuleType, SimpleNamespace
 
+import numpy as np
 import plotly.graph_objects as go
 
 
@@ -18,11 +24,13 @@ def test_app_and_biocell_app_import_headless(monkeypatch):
     assert len(biocell_mod.CELL_TYPES) == 5
 
 
-def test_biocell_app_chart_builders():
-    """Chart builder functions in biocell_app should produce valid Plotly figures."""
+def test_biocell_app_chart_builders_and_okabe_ito_palette():
+    """Chart builders produce valid dark-mode Plotly figures and support Okabe-Ito palette."""
     import biocell_app
 
-    pie_fig = biocell_app.build_cell_pie({"Neoplastic": 12, "Inflammatory": 5, "Connective": 0})
+    pie_fig = biocell_app.build_cell_pie(
+        {"Neoplastic": 12, "Inflammatory": 5, "Connective": 0}, colorblind_safe=True
+    )
     assert isinstance(pie_fig, go.Figure)
     assert len(pie_fig.data) == 1
     assert list(pie_fig.data[0].labels) == ["Neoplastic", "Inflammatory"]
@@ -41,7 +49,8 @@ def test_biocell_app_chart_builders():
         [
             {"x": 10.0, "y": 20.0, "class": "Neoplastic"},
             {"x": 30.0, "y": 40.0, "class": "Inflammatory"},
-        ]
+        ],
+        colorblind_safe=True,
     )
     assert isinstance(scatter_fig, go.Figure)
     assert len(scatter_fig.data) == 2
@@ -49,8 +58,6 @@ def test_biocell_app_chart_builders():
 
 def test_load_patch_data_edge_cases_and_bytes_labels(tmp_path):
     """load_patch_data handles empty arrays, negative/oob indices, float scaling, and bytes labels."""
-    import numpy as np
-
     import biocell_app
     from src.pipeline import load_patch
 
@@ -89,8 +96,6 @@ def test_load_patch_data_edge_cases_and_bytes_labels(tmp_path):
 
 def test_partial_dicts_and_chat_none_content(monkeypatch):
     """Chart builders handle missing keys and run_chat_query handles None LLM content."""
-    from types import SimpleNamespace
-
     import biocell_app
 
     bar_fig = biocell_app.build_organ_bar([{"organ": "Breast"}])
@@ -109,15 +114,12 @@ def test_partial_dicts_and_chat_none_content(monkeypatch):
         def completion(**kwargs):
             return SimpleNamespace(choices=[SimpleNamespace(message=SimpleNamespace(content=None))])
 
-    monkeypatch.setitem(__import__("sys").modules, "litellm", _FakeLiteLLM)
+    monkeypatch.setitem(sys.modules, "litellm", _FakeLiteLLM)
     assert biocell_app.run_chat_query("hello", {}, []) == ""
 
 
 def test_run_crewai_pipeline_litellm_patch_idempotent(monkeypatch):
     """Repeated calls to run_crewai_pipeline must not re-wrap litellm.main.completion."""
-    import sys
-    from types import ModuleType, SimpleNamespace
-
     import biocell_app
 
     orig_called = []
@@ -165,11 +167,9 @@ def test_run_crewai_pipeline_litellm_patch_idempotent(monkeypatch):
     assert fake_main.completion is first_patched
 
 
-def test_biocell_app_main_renders_real_graph_metrics_and_grayscale_voronoi(monkeypatch):
-    """main() renders connected_components + avg_degree and handles 2D grayscale Voronoi overlay."""
-    from contextlib import nullcontext
-
-    import numpy as np
+def test_biocell_app_main_renders_real_graph_metrics_and_grayscale_overlay(monkeypatch):
+    """main() renders graph topology KPIs, hardware badge, and handles 2D grayscale overlay."""
+    import re
 
     import biocell_app
 
@@ -187,8 +187,6 @@ def test_biocell_app_main_renders_real_graph_metrics_and_grayscale_voronoi(monke
 
         def markdown(self, text, **kwargs):
             if 'class="metric-card"' in text:
-                import re
-
                 lbl = re.search(r'class="metric-label">([^<]+)<', text)
                 val = re.search(r'class="metric-value">([^<]+)<', text)
                 if lbl and val:
@@ -263,7 +261,9 @@ def test_biocell_app_main_renders_real_graph_metrics_and_grayscale_voronoi(monke
         lambda img: {
             "predicted_organ": "Breast",
             "confidence": 0.9,
+            "confidence_score": 0.9,
             "top3": [{"organ": "Breast", "confidence": 0.9}],
+            "top_3_predictions": [{"organ": "Breast", "confidence": 0.9}],
             "temperature": 2.0,
             "time": 0.01,
         },
@@ -273,6 +273,7 @@ def test_biocell_app_main_renders_real_graph_metrics_and_grayscale_voronoi(monke
         "run_cell_analysis",
         lambda img: {
             "total_cells": 3,
+            "total_cell_count": 3,
             "class_counts": {"Neoplastic": 2, "Inflammatory": 1},
             "centroids": [
                 {"id": 1, "x": 10.0, "y": 10.0, "class": "Neoplastic"},
@@ -294,3 +295,13 @@ def test_biocell_app_main_renders_real_graph_metrics_and_grayscale_voronoi(monke
     assert rendered_cards["Components"] == "2"
     assert len(rendered_images) == 2
     assert rendered_images[1].shape == (32, 32, 3)
+
+
+def test_streamlit_apptest_headless_boot():
+    """Headless Streamlit AppTest smoke test verifies zero uncaught exceptions on app startup."""
+    from streamlit.testing.v1 import AppTest
+
+    at = AppTest.from_file("app.py", default_timeout=20)
+    at.run()
+    assert not at.exception, f"AppTest raised exception: {at.exception}"
+    assert len(at.tabs) == 4
