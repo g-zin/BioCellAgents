@@ -132,7 +132,8 @@ def _eval_synthetic_organ_and_calibration(
     num_classes = 19
     labels = torch.arange(n_samples, dtype=torch.long) % num_classes
 
-    # Create overconfident logits (high scale) with realistic ~85% accuracy
+    # Create strongly overconfident logits (3x temperature scale) with ~85% accuracy,
+    # mimicking an uncalibrated neural network prior to Guo et al. temperature scaling.
     logits = torch.randn((n_samples, num_classes), generator=gen) * 1.4
     correct_mask = torch.rand(n_samples, generator=gen) < 0.85
     for idx in range(n_samples):
@@ -141,6 +142,7 @@ def _eval_synthetic_organ_and_calibration(
         else:
             wrong_cls = int((labels[idx].item() + 1) % num_classes)
             logits[idx, wrong_cls] += 4.5
+    logits = logits * 3.0
 
     logits_dev = logits.to(device)
     labels_dev = labels.to(device)

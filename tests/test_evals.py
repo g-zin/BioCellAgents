@@ -64,9 +64,9 @@ class TestLayer1AndFullDualLayerSuite:
             output_dir=tmp_path,
             seed=42,
         )
-        assert summary["passed"] is True
+        assert summary["passed"] is True, f"Dual-layer eval failed: {summary}"
         l1 = summary["layer1_ml_vision"]
-        assert l1["passed"] is True
+        assert l1["passed"] is True, f"Layer 1 eval failed: {l1}"
         assert l1["segmentation"]["foreground_dice"] >= 0.75
         assert l1["segmentation"]["panoptic_quality"] >= 0.70
         assert (
