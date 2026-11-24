@@ -10,6 +10,7 @@ from torchvision import transforms
 
 from src.inference.calibration import TemperatureScaler
 from src.models.cellpose_segmenter import CellposeSegmenter
+from src.utils.device import get_device, load_checkpoint_safe
 
 
 class TwoStageCellAnalyzer:
@@ -32,7 +33,7 @@ class TwoStageCellAnalyzer:
         device="cuda",
         calibration_scaler: TemperatureScaler | None = None,
     ):
-        self.device = torch.device(device if torch.cuda.is_available() else "cpu")
+        self.device = get_device(device)
 
         # Detect segmenter interface: new-style has .segment() and is NOT a torch.nn.Module
         if hasattr(segmenter_model, "segment") and not isinstance(segmenter_model, torch.nn.Module):
@@ -55,6 +56,7 @@ class TwoStageCellAnalyzer:
 
     def _get_binary_mask(self, image_pil: Image.Image) -> np.ndarray:
         """Return a binary (H, W) uint8 mask of foreground cells at original resolution."""
+        image_pil = image_pil.convert("RGB")
         if not self._segmenter_is_torch:
             # New-style segmenter: .segment() returns binary mask at original resolution
             return self.segmenter.segment(image_pil)
@@ -72,6 +74,7 @@ class TwoStageCellAnalyzer:
 
     @torch.no_grad()
     def analyze_patch(self, image_pil: Image.Image, cell_classes: list, padding: int = 10):
+        image_pil = image_pil.convert("RGB")
         orig_w, orig_h = image_pil.size
 
         # Step 1: Get binary cell mask (handles both segmenter interfaces)
@@ -132,15 +135,10 @@ class TwoStageCellAnalyzer:
 
 def _load_weights(model, checkpoint_path, device):
     """Load a checkpoint into a model, tolerating both raw state_dicts and wrapped checkpoints."""
-    if not checkpoint_path or not Path(checkpoint_path).exists():
+    if not checkpoint_path or not Path(checkpoint_path).is_file():
         print(f"Checkpoint not found at '{checkpoint_path}'. Using randomly initialized weights.")
         return model
-    checkpoint = torch.load(checkpoint_path, map_location=device)
-    state_dict = (
-        checkpoint.get("model_state_dict", checkpoint)
-        if isinstance(checkpoint, dict)
-        else checkpoint
-    )
+    state_dict = load_checkpoint_safe(checkpoint_path, map_location=device, extract_state_dict=True)
     model.load_state_dict(state_dict)
     print(f"Loaded weights from: {checkpoint_path}")
     return model
@@ -150,7 +148,6 @@ def main():
     """CLI entry point for the two-stage cell analysis inference pipeline (biocell-infer)."""
     import argparse
     import sys
-    from pathlib import Path
 
     # Resolve project root so `src.*` imports work when invoked as a console script.
     PROJECT_ROOT = Path(__file__).resolve().parents[2]
@@ -189,7 +186,7 @@ def main():
     parser.add_argument("--padding", type=int, default=10, help="Bounding-box padding in pixels")
     args = parser.parse_args()
 
-    device = torch.device(args.device if torch.cuda.is_available() else "cpu")
+    device = get_device(args.device)
     print(f"Using device: {device}")
 
     num_cell_classes = len(CELL_TYPES)

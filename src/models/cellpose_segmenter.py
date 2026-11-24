@@ -13,7 +13,8 @@ This module provides two segmenter classes that expose a unified
 
 from __future__ import annotations
 
-from typing import Optional
+import inspect
+from typing import Any, Optional, Union
 
 import cv2
 import numpy as np
@@ -21,6 +22,38 @@ import torch
 import torch.nn as nn
 from PIL import Image
 from torchvision import transforms
+
+from src.utils.device import get_device
+
+
+def _build_cellpose_model(cellpose_cls: Any, pretrained_model: str, device: torch.device) -> Any:
+    """Instantiate ``CellposeModel`` compatibly across Cellpose v3 and v4."""
+    use_gpu = device.type == "cuda"
+    try:
+        params = inspect.signature(cellpose_cls.__init__).parameters
+        has_var_kw = any(p.kind == inspect.Parameter.VAR_KEYWORD for p in params.values())
+        kwargs: dict[str, Any] = {}
+        if "pretrained_model" in params or has_var_kw:
+            kwargs["pretrained_model"] = pretrained_model
+        if "device" in params:
+            kwargs["device"] = device
+        if "gpu" in params:
+            kwargs["gpu"] = use_gpu
+        if has_var_kw and "device" not in params and "gpu" not in params:
+            kwargs["gpu"] = use_gpu
+            kwargs["device"] = device
+        return cellpose_cls(**kwargs)
+    except (TypeError, ValueError):
+        for fallback_kwargs in (
+            {"gpu": use_gpu, "pretrained_model": pretrained_model},
+            {"pretrained_model": pretrained_model, "device": device},
+            {"pretrained_model": pretrained_model},
+        ):
+            try:
+                return cellpose_cls(**fallback_kwargs)
+            except TypeError:
+                continue
+        return cellpose_cls()
 
 
 class CellposeSegmenter:
@@ -31,44 +64,72 @@ class CellposeSegmenter:
 
     Args:
         pretrained_model: Cellpose model variant. Default ``"cpsam_v2"`` (Cellpose-SAM v2).
-        device: Torch device string (e.g. ``"cuda"``, ``"cpu"``). Auto-detected if ``None``.
+        device: Torch device or string (e.g. ``"cuda"``, ``"cpu"``). Auto-detected if ``None``.
+        model: Optional pre-instantiated Cellpose-compatible model (used for offline testing).
     """
 
-    def __init__(self, pretrained_model: str = "cpsam_v2", device: Optional[str] = None):
-        self.device = torch.device(
-            device if device else ("cuda" if torch.cuda.is_available() else "cpu")
-        )
+    def __init__(
+        self,
+        pretrained_model: str = "cpsam_v2",
+        device: Optional[Union[str, torch.device]] = None,
+        model: Optional[Any] = None,
+    ):
+        self.device = get_device(device)
+        self.pretrained_model = pretrained_model
+
+        if model is not None:
+            self.model = model
+        else:
+            try:
+                from cellpose.models import CellposeModel
+            except ImportError as exc:
+                raise ImportError(
+                    "cellpose is required for CellposeSegmenter. "
+                    "Install it with: pip install cellpose"
+                ) from exc
+
+            self.model = _build_cellpose_model(CellposeModel, pretrained_model, self.device)
+        print(f"CellposeSegmenter initialized (model={pretrained_model}, device={self.device})")
+
+    def _run_eval(self, img_array: np.ndarray) -> Any:
+        """Invoke ``self.model.eval`` compatibly across Cellpose v3 and v4 signatures."""
+        try:
+            params: dict[str, inspect.Parameter] = dict(
+                inspect.signature(self.model.eval).parameters
+            )
+        except (TypeError, ValueError):
+            params = {}
 
         try:
-            from cellpose.models import CellposeModel
-        except ImportError as exc:
-            raise ImportError(
-                "cellpose is required for CellposeSegmenter. "
-                "Install it with: pip install cellpose"
-            ) from exc
-
-        self.model = CellposeModel(pretrained_model=pretrained_model, device=self.device)
-        print(f"CellposeSegmenter initialized (model={pretrained_model}, device={self.device})")
+            if "channel_axis" in params:
+                if img_array.ndim == 3:
+                    return self.model.eval(img_array, channel_axis=-1)
+                return self.model.eval(img_array)
+            if "channels" in params:
+                return self.model.eval(img_array, channels=[0, 0])
+            return self.model.eval(img_array)
+        except TypeError:
+            return self.model.eval(img_array)
 
     def segment(self, image_pil: Image.Image) -> np.ndarray:
         """Segment cells in the image.
 
         Args:
-            image_pil: PIL Image (RGB or grayscale).
+            image_pil: PIL Image (RGB, RGBA, or grayscale).
 
         Returns:
             Binary mask of shape (H, W) with dtype uint8, where 1 = cell, 0 = background.
         """
+        if image_pil.mode not in ("RGB", "L"):
+            image_pil = image_pil.convert("RGB")
         img_array = np.array(image_pil)
 
-        # Cellpose v4: eval() with channels=[0, 0] uses first channel for both
-        masks, flows, styles = self.model.eval(
-            img_array,
-            channels=[0, 0],
-        )
+        result = self._run_eval(img_array)
+        # Unpack safely whether Cellpose returns a 3-tuple (v4) or 4-tuple (legacy v2/v3)
+        masks = result[0] if isinstance(result, (tuple, list)) else result
 
         # Convert instance mask to binary mask
-        binary_mask = (masks > 0).astype(np.uint8)
+        binary_mask = (np.asarray(masks) > 0).astype(np.uint8)
         return binary_mask
 
 
@@ -79,13 +140,11 @@ class SemanticSegmenterAdapter:
     Args:
         model: A torch ``nn.Module`` that takes a ``(B, 3, 224, 224)`` tensor and
             returns logits of shape ``(B, num_classes, H, W)``.
-        device: Torch device string. Auto-detected if ``None``.
+        device: Torch device or string. Auto-detected if ``None``.
     """
 
-    def __init__(self, model: nn.Module, device: Optional[str] = None):
-        self.device = torch.device(
-            device if device else ("cuda" if torch.cuda.is_available() else "cpu")
-        )
+    def __init__(self, model: nn.Module, device: Optional[Union[str, torch.device]] = None):
+        self.device = get_device(device)
         self.model = model.to(self.device).eval()
 
         self.transform = transforms.Compose(
@@ -104,11 +163,12 @@ class SemanticSegmenterAdapter:
         """Segment cells using the wrapped semantic model.
 
         Args:
-            image_pil: PIL Image (RGB).
+            image_pil: PIL Image (RGB or convertible to RGB).
 
         Returns:
             Binary mask of shape (H, W) with dtype uint8, where 1 = cell, 0 = background.
         """
+        image_pil = image_pil.convert("RGB")
         orig_w, orig_h = image_pil.size
 
         input_tensor = self.transform(image_pil).unsqueeze(0).to(self.device)

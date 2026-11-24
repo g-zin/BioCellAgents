@@ -70,6 +70,25 @@ class TestComputeMetrics:
         assert 0.0 <= results["accuracy"] <= 1.0
         assert 0.0 <= results["macro_f1"] <= 1.0
 
+    def test_empty_inputs_return_zero_metrics_without_nan(self):
+        import math
+
+        import pytest
+
+        from src.inference.metrics import compute_metrics
+
+        class_names = ["A", "B", "C"]
+        results = compute_metrics([], [], class_names)
+        assert results["accuracy"] == 0.0
+        assert not math.isnan(results["accuracy"])
+        assert results["macro_f1"] == 0.0
+        assert results["confusion_matrix"] == [[0, 0, 0], [0, 0, 0], [0, 0, 0]]
+        for cls in class_names:
+            assert results["per_class"][cls] == {"precision": 0.0, "recall": 0.0, "f1": 0.0}
+
+        with pytest.raises(ValueError, match="length mismatch"):
+            compute_metrics([0], [], class_names)
+
 
 class TestSaveResults:
     """Tests for save_results."""

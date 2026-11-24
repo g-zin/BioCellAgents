@@ -17,6 +17,7 @@ from src.data.dataset import (
 from src.models.dino_classifier import DINOv2CellClassifier
 from src.models.organ_classifier import OrganClassifier
 from src.models.segmentation import build_segmenter
+from src.utils.device import get_device, load_checkpoint_safe, pin_memory_for_device
 
 
 def parse_folds(fold_input):
@@ -27,9 +28,8 @@ def parse_folds(fold_input):
 
 
 def load_model_weights(model: nn.Module, model_path: str, device: torch.device):
-    if model_path and Path(model_path).exists():
-        checkpoint = torch.load(model_path, map_location=device)
-        state_dict = checkpoint.get("model_state_dict", checkpoint)
+    if model_path and Path(model_path).is_file():
+        state_dict = load_checkpoint_safe(model_path, map_location=device, extract_state_dict=True)
         model.load_state_dict(state_dict)
         print(f"Loaded checkpoint weights from: {model_path}")
     else:
@@ -52,9 +52,22 @@ def evaluate_classification(model, dataloader, device, target_names):
         all_preds.extend(preds.cpu().numpy())
         all_targets.extend(labels.cpu().numpy())
 
+    if not all_targets:
+        return 0.0, 0.0, ""
+
+    labels_list = list(range(len(target_names)))
     acc = accuracy_score(all_targets, all_preds)
-    macro_f1 = f1_score(all_targets, all_preds, average="macro")
-    report = classification_report(all_targets, all_preds, target_names=target_names, digits=4)
+    macro_f1 = f1_score(
+        all_targets, all_preds, labels=labels_list, average="macro", zero_division=0
+    )
+    report = classification_report(
+        all_targets,
+        all_preds,
+        labels=labels_list,
+        target_names=target_names,
+        digits=4,
+        zero_division=0,
+    )
 
     return acc, macro_f1, report
 
@@ -108,7 +121,8 @@ def main():
     parser.add_argument("--num_workers", type=int, default=4)
     args = parser.parse_args()
 
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    device = get_device()
+    pin_mem = pin_memory_for_device(device)
     val_folds = parse_folds(args.val_fold)
 
     print(f"Evaluation Mode | Task: {args.task.upper()} | Device: {device}")
@@ -118,7 +132,11 @@ def main():
             metadata_path=args.metadata_path, fold=val_folds, is_train=False
         )
         dataloader = DataLoader(
-            dataset, batch_size=args.batch_size, shuffle=False, num_workers=args.num_workers
+            dataset,
+            batch_size=args.batch_size,
+            shuffle=False,
+            num_workers=args.num_workers,
+            pin_memory=pin_mem,
         )
 
         model = DINOv2CellClassifier(model_size=args.model_size, num_classes=len(CELL_TYPES))
@@ -134,7 +152,11 @@ def main():
             metadata_path=args.metadata_path, fold=val_folds, is_train=False
         )
         dataloader = DataLoader(
-            dataset, batch_size=args.batch_size, shuffle=False, num_workers=args.num_workers
+            dataset,
+            batch_size=args.batch_size,
+            shuffle=False,
+            num_workers=args.num_workers,
+            pin_memory=pin_mem,
         )
 
         num_classes = len(CELL_TYPES) + 1 if "Background" not in CELL_TYPES else len(CELL_TYPES)
@@ -149,7 +171,11 @@ def main():
             metadata_path=args.metadata_path, fold=val_folds, is_train=False
         )
         dataloader = DataLoader(
-            dataset, batch_size=args.batch_size, shuffle=False, num_workers=args.num_workers
+            dataset,
+            batch_size=args.batch_size,
+            shuffle=False,
+            num_workers=args.num_workers,
+            pin_memory=pin_mem,
         )
 
         model = OrganClassifier(num_classes=len(ORGAN_TYPES))

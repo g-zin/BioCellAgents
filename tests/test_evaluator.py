@@ -140,3 +140,27 @@ class TestEvaluator:
         assert out_path.exists()
         saved = json.loads(out_path.read_text(encoding="utf-8"))
         assert saved["accuracy"] == 0.95
+
+    def test_empty_dataloaders_return_zero_metrics(self):
+        empty_seg = DataLoader(
+            TensorDataset(torch.empty(0, 1, 8, 8), torch.empty(0, 8, 8, dtype=torch.long)),
+            batch_size=2,
+        )
+        seg_res = evaluate_segmentation(
+            _FixedSegModel(3, fixed_class=0), empty_seg, torch.device("cpu"), num_classes=3
+        )
+        assert seg_res["num_samples"] == 0
+        assert seg_res["dice"] == 0.0
+        assert seg_res["iou"] == 0.0
+        assert seg_res["per_class_dice"] == [0.0, 0.0, 0.0]
+
+        empty_clf = DataLoader(
+            TensorDataset(torch.empty(0, 1), torch.empty(0, dtype=torch.long)),
+            batch_size=2,
+        )
+        clf_res = evaluate_classification(
+            _ExactClassModel(2), empty_clf, torch.device("cpu"), ["A", "B"]
+        )
+        assert clf_res["num_samples"] == 0
+        assert clf_res["accuracy"] == 0.0
+        assert clf_res["macro_f1"] == 0.0

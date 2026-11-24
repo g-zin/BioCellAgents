@@ -180,3 +180,51 @@ class TestTemperatureScaler:
         assert "default" in repr(loaded)
         probs = loaded.calibrate(torch.tensor([[2.0, 1.0]]))
         assert torch.isclose(probs.sum(), torch.tensor(1.0), atol=1e-5)
+
+    def test_compute_ece_from_logits_empty_and_validation(self):
+        from src.inference.calibration import compute_ece
+
+        logits = torch.tensor([[3.0, 1.0], [0.5, 2.5], [2.0, 0.0]])
+        labels = torch.tensor([0, 1, 0])
+        probs = torch.softmax(logits, dim=-1)
+
+        ece_from_logits = compute_ece(logits, labels, n_bins=10, from_logits=True)
+        ece_from_probs = compute_ece(probs, labels, n_bins=10, from_logits=False)
+        assert ece_from_logits == pytest.approx(ece_from_probs, abs=1e-6)
+
+        assert compute_ece(torch.empty(0, 3), torch.empty(0, dtype=torch.long)) == 0.0
+
+        with pytest.raises(ValueError, match="n_bins"):
+            compute_ece(probs, labels, n_bins=0)
+        with pytest.raises(ValueError, match="sample count mismatch"):
+            compute_ece(probs, labels[:2])
+
+    def test_compute_ece_rejects_invalid_values_and_clamps_boundary_overshoot(self):
+        from src.inference.calibration import compute_ece
+
+        # Raw logits / > 1.0 probabilities rejected when from_logits=False
+        with pytest.raises(ValueError, match="Probabilities must be in"):
+            compute_ece(torch.tensor([[5.0, 1.0]]), torch.tensor([1]), from_logits=False)
+
+        # Negative probabilities rejected when from_logits=False
+        with pytest.raises(ValueError, match="Probabilities must be in"):
+            compute_ece(torch.tensor([[-0.2, 0.8]]), torch.tensor([1]), from_logits=False)
+
+        # NaN and Inf rejected
+        with pytest.raises(ValueError, match="non-finite"):
+            compute_ece(torch.tensor([[float("nan"), 0.5]]), torch.tensor([1]), from_logits=False)
+        with pytest.raises(ValueError, match="non-finite"):
+            compute_ece(torch.tensor([[float("inf"), 0.5]]), torch.tensor([1]), from_logits=True)
+
+        # Zero-class (N, 0) tensor rejected
+        with pytest.raises(ValueError, match="at least 1 class"):
+            compute_ece(torch.empty(3, 0), torch.tensor([0, 0, 0]), from_logits=False)
+
+        # Tiny float32 rounding overshoot (1.0 + 1e-7) is clamped cleanly, NOT dropped as 0.0
+        overshoot = torch.tensor([[1.0 + 1e-7, 0.0]], dtype=torch.float32)
+        ece_overshoot = compute_ece(overshoot, torch.tensor([1]), n_bins=15, from_logits=False)
+        assert ece_overshoot == pytest.approx(1.0, abs=1e-6)
+
+        undershoot = torch.tensor([[-1e-7, 1.0]], dtype=torch.float32)
+        ece_undershoot = compute_ece(undershoot, torch.tensor([1]), n_bins=15, from_logits=False)
+        assert ece_undershoot == pytest.approx(0.0, abs=1e-6)

@@ -56,6 +56,18 @@ def evaluate_classification(
         all_targets.extend(labels.cpu().numpy())
 
     labels_list = list(range(len(class_names)))
+    if not all_targets:
+        per_class = {
+            name: {"precision": 0.0, "recall": 0.0, "f1": 0.0, "support": 0} for name in class_names
+        }
+        return {
+            "accuracy": 0.0,
+            "macro_f1": 0.0,
+            "per_class": per_class,
+            "confusion_matrix": [[0 for _ in labels_list] for _ in labels_list],
+            "num_samples": 0,
+        }
+
     acc = accuracy_score(all_targets, all_preds)
     macro_f1 = f1_score(
         all_targets, all_preds, labels=labels_list, average="macro", zero_division=0
@@ -133,6 +145,15 @@ def evaluate_segmentation(
 
         all_preds_list.append(preds)
         all_targets_list.append(masks)
+
+    if not all_preds_list:
+        return {
+            "dice": 0.0,
+            "iou": 0.0,
+            "per_class_dice": [0.0] * num_classes,
+            "per_class_iou": [0.0] * num_classes,
+            "num_samples": 0,
+        }
 
     all_preds = torch.cat(all_preds_list, dim=0).numpy()
     all_targets = torch.cat(all_targets_list, dim=0).numpy()

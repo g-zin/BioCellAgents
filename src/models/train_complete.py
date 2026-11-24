@@ -14,6 +14,7 @@ import sys
 from collections import defaultdict
 from datetime import datetime
 from pathlib import Path
+from typing import Any, Dict, List
 
 import torch
 import torch.nn as nn
@@ -31,6 +32,7 @@ from src.models.base_trainer import BaseTrainer
 from src.models.dino_classifier import DINOv2CellClassifier
 from src.models.losses import CombinedSegmentationLoss
 from src.models.organ_classifier import OrganClassifier
+from src.utils.device import get_device, pin_memory_for_device
 
 # Disable xFormers for compatibility
 os.environ["XFORMERS_DISABLED"] = "1"
@@ -47,7 +49,8 @@ def train_segmentation_model(args):
     print("STEP 1: TRAINING SEGMENTATION MODEL")
     print("=" * 70)
 
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    device = get_device()
+    pin_mem = pin_memory_for_device(device)
     print(f"Device: {device}")
 
     # Load datasets
@@ -64,14 +67,14 @@ def train_segmentation_model(args):
         batch_size=args.seg_batch_size,
         shuffle=True,
         num_workers=args.num_workers,
-        pin_memory=(device.type == "cuda"),
+        pin_memory=pin_mem,
     )
     val_loader = DataLoader(
         val_dataset,
         batch_size=args.seg_batch_size,
         shuffle=False,
         num_workers=args.num_workers,
-        pin_memory=(device.type == "cuda"),
+        pin_memory=pin_mem,
     )
 
     print(f"Train: {len(train_dataset)} samples")
@@ -108,6 +111,7 @@ def train_segmentation_model(args):
         head_lr=args.seg_head_lr,
         output_dir=str(save_dir),
         task_name="segmentation",
+        device=device,
     )
     trainer._num_classes = num_classes
 
@@ -162,8 +166,8 @@ def train_classification_epoch(model, dataloader, criterion, optimizer, device):
         running_loss += loss.item() * crops.size(0)
         pbar.set_postfix({"loss": f"{loss.item():.4f}"})
 
-    avg_loss = running_loss / total
-    accuracy = correct / total
+    avg_loss = running_loss / max(total, 1)
+    accuracy = correct / max(total, 1)
     return avg_loss, accuracy
 
 
@@ -192,8 +196,8 @@ def validate_classification(model, dataloader, device):
         preds_list.extend(preds.cpu().numpy())
         labels_list.extend(labels.cpu().numpy())
 
-    accuracy = correct / total
-    avg_loss = running_loss / total
+    accuracy = correct / max(total, 1)
+    avg_loss = running_loss / max(total, 1)
 
     return avg_loss, accuracy, preds_list, labels_list
 
@@ -204,7 +208,8 @@ def train_classification_model(args):
     print("STEP 2: TRAINING CLASSIFICATION MODEL")
     print("=" * 70)
 
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    device = get_device()
+    pin_mem = pin_memory_for_device(device)
     print(f"Device: {device}")
 
     # Load datasets
@@ -221,14 +226,14 @@ def train_classification_model(args):
         batch_size=args.clf_batch_size,
         shuffle=True,
         num_workers=args.num_workers,
-        pin_memory=(device.type == "cuda"),
+        pin_memory=pin_mem,
     )
     val_loader = DataLoader(
         val_dataset,
         batch_size=args.clf_batch_size,
         shuffle=False,
         num_workers=args.num_workers,
-        pin_memory=(device.type == "cuda"),
+        pin_memory=pin_mem,
     )
 
     print(f"Train: {len(train_dataset)} cell crops")
@@ -245,11 +250,32 @@ def train_classification_model(args):
 
     # Setup training
     criterion = nn.CrossEntropyLoss()
-    optimizer = torch.optim.AdamW(
-        model.classifier_head.parameters(), lr=args.clf_lr, weight_decay=1e-2
-    )
+    if args.freeze_backbone:
+        optimizer = torch.optim.AdamW(
+            model.classifier_head.parameters(), lr=args.clf_lr, weight_decay=1e-2
+        )
+        print("Training only classifier head (backbone frozen)")
+    else:
+        param_groups = [
+            {
+                "params": model.backbone.parameters(),
+                "lr": args.clf_lr * 0.01,
+                "weight_decay": 1e-2,
+            },
+            {
+                "params": model.classifier_head.parameters(),
+                "lr": args.clf_lr,
+                "weight_decay": 1e-2,
+            },
+        ]
+        optimizer = torch.optim.AdamW(param_groups)
+        print(
+            f"Training entire model (backbone LR: {args.clf_lr * 0.01:.2e}, "
+            f"head LR: {args.clf_lr:.2e})"
+        )
+
     scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
-        optimizer, T_max=args.clf_epochs, eta_min=1e-7
+        optimizer, T_max=max(args.clf_epochs, 1), eta_min=1e-7
     )
 
     # Create checkpoint directory
@@ -258,7 +284,7 @@ def train_classification_model(args):
     patience_counter = 0
 
     best_val_acc = 0.0
-    training_history = defaultdict(list)
+    training_history: Dict[str, List[Any]] = defaultdict(list)
 
     print(f"\nTraining for {args.clf_epochs} epochs...")
 
@@ -270,10 +296,10 @@ def train_classification_model(args):
         scheduler.step()
 
         training_history["epoch"].append(epoch)
-        training_history["train_loss"].append(train_loss)
-        training_history["train_acc"].append(train_acc)
-        training_history["val_loss"].append(val_loss)
-        training_history["val_acc"].append(val_acc)
+        training_history["train_loss"].append(float(train_loss))
+        training_history["train_acc"].append(float(train_acc))
+        training_history["val_loss"].append(float(val_loss))
+        training_history["val_acc"].append(float(val_acc))
 
         print(
             f"Epoch [{epoch:02d}/{args.clf_epochs:02d}] | "
@@ -288,7 +314,7 @@ def train_classification_model(args):
                 "epoch": epoch,
                 "model_state_dict": model.state_dict(),
                 "optimizer_state_dict": optimizer.state_dict(),
-                "val_accuracy": val_acc,
+                "val_accuracy": float(val_acc),
             }
             checkpoint_path = save_dir / "best_model.pt"
             torch.save(checkpoint, checkpoint_path)
@@ -319,7 +345,8 @@ def train_organ_model(args):
     print("STEP 3: TRAINING ORGAN CLASSIFICATION MODEL")
     print("=" * 70)
 
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    device = get_device()
+    pin_mem = pin_memory_for_device(device)
     print(f"Device: {device}")
 
     # Load datasets
@@ -336,14 +363,14 @@ def train_organ_model(args):
         batch_size=args.batch_size,
         shuffle=True,
         num_workers=args.num_workers,
-        pin_memory=(device.type == "cuda"),
+        pin_memory=pin_mem,
     )
     val_loader = DataLoader(
         val_dataset,
         batch_size=args.batch_size,
         shuffle=False,
         num_workers=args.num_workers,
-        pin_memory=(device.type == "cuda"),
+        pin_memory=pin_mem,
     )
 
     print(f"Train: {len(train_dataset)} samples")
@@ -378,7 +405,7 @@ def train_organ_model(args):
         print(f"Training entire model (backbone LR: {args.lr * 0.01:.2e}, head LR: {args.lr:.2e})")
 
     scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
-        optimizer, T_max=args.epochs, eta_min=1e-7
+        optimizer, T_max=max(args.epochs, 1), eta_min=1e-7
     )
 
     # Create checkpoint directory
@@ -387,7 +414,8 @@ def train_organ_model(args):
     patience_counter = 0
 
     best_val_acc = 0.0
-    training_history = defaultdict(list)
+    best_epoch = 0
+    training_history: Dict[str, List[Any]] = defaultdict(list)
 
     print(f"\nTraining for {args.epochs} epochs...")
     print(f"   Learning rate: {args.lr:.2e}")
@@ -414,6 +442,7 @@ def train_organ_model(args):
 
         if val_acc > best_val_acc + args.min_delta:
             best_val_acc = val_acc
+            best_epoch = epoch
             patience_counter = 0
             checkpoint = {
                 "epoch": epoch,
@@ -451,9 +480,7 @@ def train_organ_model(args):
     print("\nTraining complete!")
     print(f"   Best Val Accuracy: {best_val_acc:.4f}")
     print(f"   Checkpoints saved to: {save_dir}")
-    print(
-        f"   - best_model.pt (epoch {training_history['epoch'][training_history['val_acc'].index(best_val_acc)]})"
-    )
+    print(f"   - best_model.pt (epoch {best_epoch})")
     print(f"   - final_model.pt (epoch {args.epochs})")
     print("   - training_history.json")
 
@@ -470,7 +497,12 @@ def main():
     parser.add_argument(
         "--model_size", type=str, default="vits14", choices=["vits14", "vitb14", "vitl14"]
     )
-    parser.add_argument("--freeze_backbone", action="store_true", default=True)
+    parser.add_argument(
+        "--freeze_backbone",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help="Freeze backbone weights (use --no-freeze_backbone to fine-tune)",
+    )
     parser.add_argument("--output_dir", type=str, default="checkpoints")
     parser.add_argument("--num_workers", type=int, default=0)
 
@@ -505,9 +537,11 @@ def main():
     )
 
     # Pipeline control
-    parser.add_argument("--train_segmentation", action="store_true", default=True)
-    parser.add_argument("--train_classification", action="store_true", default=True)
-    parser.add_argument("--train_organ", action="store_true", default=True)
+    parser.add_argument("--train_segmentation", action=argparse.BooleanOptionalAction, default=True)
+    parser.add_argument(
+        "--train_classification", action=argparse.BooleanOptionalAction, default=True
+    )
+    parser.add_argument("--train_organ", action=argparse.BooleanOptionalAction, default=True)
     parser.add_argument("--skip_seg", action="store_true", help="Skip segmentation training")
     parser.add_argument("--skip_clf", action="store_true", help="Skip classification training")
     parser.add_argument(
@@ -520,7 +554,7 @@ def main():
     print("BIOCELL AGENTS: Multi-Agent Training Pipeline")
     print("=" * 70)
     print(f"Start time: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
-    print(f"Device: {'CUDA' if torch.cuda.is_available() else 'CPU'}")
+    print(f"Device: {get_device()}")
 
     try:
         if not args.skip_seg and args.train_segmentation:

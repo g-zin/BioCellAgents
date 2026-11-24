@@ -1,9 +1,12 @@
 import os
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional, Sequence, Union
 
+import numpy as np
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+
+from src.utils.device import amp_autocast
 
 os.environ["XFORMERS_DISABLED"] = "1"
 
@@ -12,7 +15,11 @@ class DINOv2CellClassifier(nn.Module):
     """STEP 3: Classification model using DINOv2 backbone for single-cell crop typing."""
 
     def __init__(
-        self, model_size: str = "vits14", num_classes: int = 5, freeze_backbone: bool = True
+        self,
+        model_size: str = "vits14",
+        num_classes: int = 5,
+        freeze_backbone: bool = True,
+        backbone: Optional[nn.Module] = None,
     ):
         super().__init__()
         embed_dims = {"vits14": 384, "vitb14": 768, "vitl14": 1024}
@@ -22,7 +29,11 @@ class DINOv2CellClassifier(nn.Module):
             )
 
         embed_dim = embed_dims[model_size]
-        self.backbone = torch.hub.load("facebookresearch/dinov2", f"dinov2_{model_size}")
+        self.backbone: Any = (
+            backbone
+            if backbone is not None
+            else torch.hub.load("facebookresearch/dinov2", f"dinov2_{model_size}")
+        )
 
         if freeze_backbone:
             for param in self.backbone.parameters():
@@ -41,33 +52,60 @@ class DINOv2CellClassifier(nn.Module):
         if x.shape[-1] != 224 or x.shape[-2] != 224:
             x = F.interpolate(x, size=(224, 224), mode="bilinear", align_corners=False)
 
-        device_type = x.device.type
-        if device_type == "cuda":
-            with torch.amp.autocast(device_type="cuda", dtype=torch.float16):
-                features = self.backbone(x)
-        else:
+        with amp_autocast(x.device):
             features = self.backbone(x)
 
         features = features.to(x.dtype)
         return self.classifier_head(features)
 
     def classify_crops(
-        self, crops: List[torch.Tensor], batch_size: int = 32
+        self,
+        crops: Union[torch.Tensor, np.ndarray, Sequence[Union[torch.Tensor, np.ndarray]]],
+        batch_size: int = 32,
     ) -> List[Dict[str, Any]]:
-        """Classify a list of cell crops in batches."""
+        """Classify a list, 3D crop, or 4D batch of cell crops in batches."""
+        crop_list: List[Union[torch.Tensor, np.ndarray]]
+        if isinstance(crops, (torch.Tensor, np.ndarray)):
+            if crops.ndim == 3:
+                crop_list = [crops]
+            elif crops.ndim == 4:
+                if crops.shape[0] == 0:
+                    return []
+                crop_list = [crops[i] for i in range(crops.shape[0])]
+            else:
+                raise ValueError(
+                    f"Expected 3D or 4D tensor/array for crops, got {crops.ndim}D "
+                    f"with shape {tuple(crops.shape)}"
+                )
+        else:
+            if len(crops) == 0:
+                return []
+            crop_list = list(crops)
+
         self.eval()
-        results = []
+        try:
+            model_device = next(self.parameters()).device
+        except StopIteration:
+            model_device = torch.device("cpu")
+
+        results: List[Dict[str, Any]] = []
 
         with torch.no_grad():
-            for i in range(0, len(crops), batch_size):
-                batch = crops[i : i + batch_size]
-                if isinstance(batch[0], torch.Tensor):
-                    batch_tensor = torch.stack(batch)
-                else:
-                    batch_tensor = torch.as_tensor(batch)
+            for i in range(0, len(crop_list), batch_size):
+                batch = crop_list[i : i + batch_size]
+                normalized_batch: List[torch.Tensor] = []
+                for item in batch:
+                    if isinstance(item, torch.Tensor):
+                        t = item.detach().to(dtype=torch.float32)
+                    else:
+                        t = torch.as_tensor(np.asarray(item), dtype=torch.float32)
+                    if t.ndim == 4 and t.shape[0] == 1:
+                        t = t.squeeze(0)
+                    if t.ndim == 3 and t.shape[-1] == 3 and t.shape[0] != 3:
+                        t = t.permute(2, 0, 1)
+                    normalized_batch.append(t.to(model_device))
 
-                if batch_tensor.device.type == "cuda":
-                    batch_tensor = batch_tensor.cuda()
+                batch_tensor = torch.stack(normalized_batch, dim=0)
 
                 logits = self.forward(batch_tensor)
                 probs = F.softmax(logits, dim=1)
@@ -95,7 +133,11 @@ class DINOv2CellSegmenter(nn.Module):
     """
 
     def __init__(
-        self, model_size: str = "vits14", num_classes: int = 6, freeze_backbone: bool = True
+        self,
+        model_size: str = "vits14",
+        num_classes: int = 6,
+        freeze_backbone: bool = True,
+        backbone: Optional[nn.Module] = None,
     ):
         super().__init__()
         embed_dims = {"vits14": 384, "vitb14": 768, "vitl14": 1024}
@@ -105,7 +147,11 @@ class DINOv2CellSegmenter(nn.Module):
             )
 
         embed_dim = embed_dims[model_size]
-        self.backbone = torch.hub.load("facebookresearch/dinov2", f"dinov2_{model_size}")
+        self.backbone: Any = (
+            backbone
+            if backbone is not None
+            else torch.hub.load("facebookresearch/dinov2", f"dinov2_{model_size}")
+        )
 
         if freeze_backbone:
             for param in self.backbone.parameters():
@@ -129,17 +175,15 @@ class DINOv2CellSegmenter(nn.Module):
         if x.shape[-1] != 224 or x.shape[-2] != 224:
             x = F.interpolate(x, size=(224, 224), mode="bilinear", align_corners=False)
 
-        device_type = x.device.type
-        if device_type == "cuda":
-            with torch.amp.autocast(device_type="cuda", dtype=torch.float16):
-                out = self.backbone.forward_features(x)
-        else:
+        with amp_autocast(x.device):
             out = self.backbone.forward_features(x)
 
         # DINOv2's forward_features returns a dict; extract the normalized patch
         # tokens (B, N, D) which form the spatial feature map.
         if isinstance(out, dict):
-            spatial = out.get("x_norm_patchtokens", out.get("x_prenorm"))
+            spatial = out.get("x_norm_patchtokens")
+            if spatial is None:
+                spatial = out.get("x_prenorm")
         else:
             spatial = out
 
@@ -149,6 +193,10 @@ class DINOv2CellSegmenter(nn.Module):
         if spatial.dim() == 3:
             B, N, D = spatial.shape
             H = W = int(N**0.5)
+            if H * W == 0:
+                raise RuntimeError("DINOv2 forward_features returned empty spatial tokens")
+            if H * W != N:
+                spatial = spatial[:, -H * W :, :]
             spatial = spatial.permute(0, 2, 1).reshape(B, D, H, W)
         elif spatial.dim() == 2:
             B, D = spatial.shape

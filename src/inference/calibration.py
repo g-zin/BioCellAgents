@@ -99,7 +99,7 @@ class TemperatureScaler:
         self
         """
         logits = logits.detach().float()
-        labels = labels.long()
+        labels = labels.to(device=logits.device, dtype=torch.long)
 
         if logits.numel() == 0 or logits.shape[0] == 0 or labels.numel() == 0:
             raise ValueError("Cannot fit TemperatureScaler on empty logits/labels.")
@@ -108,8 +108,8 @@ class TemperatureScaler:
                 f"logits and labels sample count mismatch: {logits.shape[0]} vs {labels.shape[0]}"
             )
 
-        # Initialize T near 1.0 (log-parameterization for positivity)
-        log_t = torch.tensor(0.0, requires_grad=True)
+        # Initialize T near 1.0 (log-parameterization for positivity) on the logits device
+        log_t = torch.tensor(0.0, device=logits.device, dtype=logits.dtype, requires_grad=True)
         optimizer = torch.optim.LBFGS([log_t], lr=lr, max_iter=max_iter)
 
         def closure():
@@ -294,3 +294,80 @@ class TemperatureScaler:
         return (
             f"TemperatureScaler(T={self.temperature:.4f}, " f"status={status}, n={self.n_samples})"
         )
+
+
+def compute_ece(
+    probs_or_logits: Any,
+    labels: Any,
+    n_bins: int = 15,
+    from_logits: bool = False,
+) -> float:
+    """Compute Expected Calibration Error (ECE) with equal-width confidence bins.
+
+    Args:
+        probs_or_logits: 2D array/tensor of shape ``(N, C)`` containing softmax
+            probabilities (default) or raw logits (when ``from_logits=True``).
+        labels: 1D array/tensor of ground-truth class indices of shape ``(N,)``.
+        n_bins: Number of equally spaced confidence bins in ``[0, 1]``.
+        from_logits: If ``True``, apply softmax to ``probs_or_logits`` first.
+
+    Returns:
+        Expected Calibration Error as a float in ``[0.0, 1.0]``.
+    """
+    if isinstance(n_bins, bool) or not isinstance(n_bins, int) or n_bins < 1:
+        raise ValueError(f"n_bins must be a positive integer, got {n_bins!r}")
+
+    tensor = (
+        probs_or_logits.detach().float()
+        if isinstance(probs_or_logits, torch.Tensor)
+        else torch.as_tensor(probs_or_logits, dtype=torch.float32)
+    )
+    target = (
+        labels.detach().to(device=tensor.device, dtype=torch.long)
+        if isinstance(labels, torch.Tensor)
+        else torch.as_tensor(labels, dtype=torch.long, device=tensor.device)
+    )
+
+    if tensor.numel() == 0 and target.numel() == 0:
+        return 0.0
+    if tensor.ndim != 2:
+        raise ValueError(f"Expected 2D probs_or_logits (N, C), got shape {tuple(tensor.shape)}")
+    if target.ndim != 1 or tensor.shape[0] != target.shape[0]:
+        raise ValueError(
+            f"probs_or_logits and labels sample count mismatch: "
+            f"{tuple(tensor.shape)} vs {tuple(target.shape)}"
+        )
+    if tensor.shape[1] == 0:
+        raise ValueError("probs_or_logits must have at least 1 class")
+    if not bool(torch.isfinite(tensor).all().item()):
+        raise ValueError("probs_or_logits contains non-finite values (NaN or Inf)")
+
+    if from_logits:
+        probs = F.softmax(tensor, dim=-1)
+    else:
+        if bool(((tensor < -1e-6) | (tensor > 1.0 + 1e-6)).any().item()):
+            raise ValueError(
+                "Probabilities must be in [0, 1] when from_logits=False; "
+                "pass from_logits=True for logits"
+            )
+        probs = tensor.clamp(0.0, 1.0)
+    confidences, predictions = torch.max(probs, dim=-1)
+    accuracies = predictions.eq(target).float()
+
+    bin_boundaries = torch.linspace(0.0, 1.0, steps=n_bins + 1, device=probs.device)
+    ece = torch.tensor(0.0, device=probs.device)
+
+    for idx in range(n_bins):
+        lower = bin_boundaries[idx]
+        upper = bin_boundaries[idx + 1]
+        if idx == 0:
+            in_bin = (confidences >= lower) & (confidences <= upper)
+        else:
+            in_bin = (confidences > lower) & (confidences <= upper)
+        prop_in_bin = in_bin.float().mean()
+        if prop_in_bin.item() > 0.0:
+            avg_conf = confidences[in_bin].mean()
+            avg_acc = accuracies[in_bin].mean()
+            ece = ece + torch.abs(avg_conf - avg_acc) * prop_in_bin
+
+    return float(ece.item())

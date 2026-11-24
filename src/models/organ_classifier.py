@@ -3,6 +3,7 @@ from typing import Tuple, Union
 import torch
 import torch.nn as nn
 from torchvision import transforms
+from torchvision.models import EfficientNet_B0_Weights
 from torchvision.models import efficientnet_b0 as efficientnet
 
 
@@ -18,9 +19,19 @@ class OrganClassifier(nn.Module):
         num_classes: int = 19,
         dropout_rate: float = 0.3,
         freeze_backbone: bool = False,
+        pretrained: bool = True,
     ):
         super().__init__()
-        self.backbone = efficientnet(pretrained=True)
+        weights = EfficientNet_B0_Weights.DEFAULT if pretrained else None
+        try:
+            self.backbone = efficientnet(weights=weights)
+        except Exception as exc:
+            if pretrained:
+                print(
+                    f"Could not load pretrained EfficientNet-B0 weights ({exc}); "
+                    f"falling back to random initialization."
+                )
+            self.backbone = efficientnet(weights=None)
         # Capture the feature dimension from the original classifier head
         # (nn.Sequential(Dropout, Linear)) BEFORE replacing it with Identity.
         in_features = self.backbone.classifier[1].in_features

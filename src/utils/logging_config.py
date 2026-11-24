@@ -71,6 +71,8 @@ def setup_logger(
     """Create and configure a logger with console + rotating file handlers."""
     logger = logging.getLogger(name)
     logger.setLevel(level)
+    for existing_handler in list(logger.handlers):
+        existing_handler.close()
     logger.handlers.clear()
 
     log_path = Path(log_dir)
@@ -96,11 +98,11 @@ def setup_logger(
     return logger
 
 
-def get_logger(name: str = "biocell") -> logging.Logger:
+def get_logger(name: str = "biocell", log_dir: str = "logs") -> logging.Logger:
     """Get an existing logger or create a default one."""
     logger = logging.getLogger(name)
     if not logger.handlers:
-        logger = setup_logger(name)
+        logger = setup_logger(name, log_dir=log_dir)
     return logger
 
 
@@ -109,7 +111,8 @@ class TrainingLogger:
 
     def __init__(self, task_name: str = "training", log_dir: str = "logs"):
         self.task_name = task_name
-        self.logger = get_logger(f"biocell.{task_name}")
+        self.log_dir = log_dir
+        self.logger = setup_logger(f"biocell.{task_name}", log_dir=log_dir)
         self._epoch_start_time: Optional[float] = None
 
     def log_epoch_start(self, epoch: int, total_epochs: int) -> None:
@@ -157,7 +160,8 @@ class InferenceLogger:
 
     def __init__(self, model_name: str = "inference", log_dir: str = "logs"):
         self.model_name = model_name
-        self.logger = get_logger(f"biocell.{model_name}")
+        self.log_dir = log_dir
+        self.logger = setup_logger(f"biocell.{model_name}", log_dir=log_dir)
 
     def track(self, operation: str):
         """Context manager that tracks operation duration."""

@@ -19,6 +19,7 @@ import sys
 from collections import defaultdict
 from datetime import datetime
 from pathlib import Path
+from typing import Any, Dict, List
 
 import torch
 import torch.nn as nn
@@ -27,6 +28,7 @@ from tqdm import tqdm
 
 from src.data.dataset import CELL_TYPES, PanNukeCellPatchDataset
 from src.models.dino_classifier import DINOv2CellClassifier
+from src.utils.device import get_device, pin_memory_for_device
 
 os.environ["XFORMERS_DISABLED"] = "1"
 
@@ -58,8 +60,8 @@ def train_epoch(model, dataloader, criterion, optimizer, device):
         running_loss += loss.item() * crops.size(0)
         pbar.set_postfix({"loss": f"{loss.item():.4f}"})
 
-    avg_loss = running_loss / total
-    accuracy = correct / total
+    avg_loss = running_loss / max(total, 1)
+    accuracy = correct / max(total, 1)
     return avg_loss, accuracy
 
 
@@ -82,8 +84,8 @@ def validate(model, dataloader, device):
         total += labels.size(0)
         running_loss += loss.item() * crops.size(0)
 
-    accuracy = correct / total
-    avg_loss = running_loss / total
+    accuracy = correct / max(total, 1)
+    avg_loss = running_loss / max(total, 1)
     return avg_loss, accuracy
 
 
@@ -93,7 +95,8 @@ def train_classification(args):
     print("TRAINING CLASSIFICATION MODEL")
     print("=" * 70)
 
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    device = get_device()
+    pin_mem = pin_memory_for_device(device)
     print(f"Device: {device}")
 
     # Load datasets
@@ -110,14 +113,14 @@ def train_classification(args):
         batch_size=args.batch_size,
         shuffle=True,
         num_workers=args.num_workers,
-        pin_memory=(device.type == "cuda"),
+        pin_memory=pin_mem,
     )
     val_loader = DataLoader(
         val_dataset,
         batch_size=args.batch_size,
         shuffle=False,
         num_workers=args.num_workers,
-        pin_memory=(device.type == "cuda"),
+        pin_memory=pin_mem,
     )
 
     print(f"Train: {len(train_dataset)} cell crops")
@@ -157,7 +160,7 @@ def train_classification(args):
         print(f"Training entire model (backbone LR: {args.lr * 0.01:.2e}, head LR: {args.lr:.2e})")
 
     scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
-        optimizer, T_max=args.epochs, eta_min=1e-7
+        optimizer, T_max=max(args.epochs, 1), eta_min=1e-7
     )
 
     # Create checkpoint directory
@@ -165,7 +168,8 @@ def train_classification(args):
     save_dir.mkdir(parents=True, exist_ok=True)
 
     best_val_acc = 0.0
-    training_history = defaultdict(list)
+    best_epoch = 0
+    training_history: Dict[str, List[Any]] = defaultdict(list)
 
     print(f"\nTraining for {args.epochs} epochs...")
     print(f"   Learning rate: {args.lr:.2e}")
@@ -190,6 +194,7 @@ def train_classification(args):
 
         if val_acc > best_val_acc:
             best_val_acc = val_acc
+            best_epoch = epoch
             checkpoint = {
                 "epoch": epoch,
                 "model_state_dict": model.state_dict(),
@@ -217,9 +222,7 @@ def train_classification(args):
     print("\nTraining complete!")
     print(f"   Best Val Accuracy: {best_val_acc:.4f}")
     print(f"   Checkpoints saved to: {save_dir}")
-    print(
-        f"   - best_model.pt (epoch {training_history['epoch'][training_history['val_acc'].index(best_val_acc)]})"
-    )
+    print(f"   - best_model.pt (epoch {best_epoch})")
     print(f"   - final_model.pt (epoch {args.epochs})")
     print("   - training_history.json")
 
@@ -269,9 +272,9 @@ Examples:
     )
     parser.add_argument(
         "--freeze_backbone",
-        action="store_true",
+        action=argparse.BooleanOptionalAction,
         default=True,
-        help="Freeze backbone and only train classifier head",
+        help="Freeze backbone and only train classifier head (use --no-freeze_backbone to fine-tune)",
     )
 
     # Training arguments
@@ -291,7 +294,7 @@ Examples:
     print("BIOCELL AGENTS: Classification Training")
     print("=" * 70)
     print(f"Start time: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
-    print(f"Device: {'CUDA' if torch.cuda.is_available() else 'CPU'}")
+    print(f"Device: {get_device()}")
 
     try:
         train_classification(args)

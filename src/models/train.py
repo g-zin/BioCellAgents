@@ -1,13 +1,13 @@
 import argparse
 from pathlib import Path
 
-import torch
 from torch.utils.data import DataLoader
 
 from src.data.dataset import CELL_TYPES, PanNukeSegmentationDataset
 from src.models.base_trainer import BaseTrainer
 from src.models.losses import CombinedSegmentationLoss
 from src.models.segmentation import build_segmenter
+from src.utils.device import get_device, pin_memory_for_device
 
 
 def parse_fold_arg(fold_arg):
@@ -48,7 +48,8 @@ def main():
     parser.add_argument("--num_workers", type=int, default=0)
     args = parser.parse_args()
 
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    device = get_device()
+    pin_mem = pin_memory_for_device(device)
     print(f"Using device: {device}")
 
     train_folds = parse_fold_arg(args.train_fold)
@@ -66,14 +67,14 @@ def main():
         batch_size=args.batch_size,
         shuffle=True,
         num_workers=args.num_workers,
-        pin_memory=(device.type == "cuda"),
+        pin_memory=pin_mem,
     )
     val_loader = DataLoader(
         val_dataset,
         batch_size=args.batch_size,
         shuffle=False,
         num_workers=args.num_workers,
-        pin_memory=(device.type == "cuda"),
+        pin_memory=pin_mem,
     )
 
     # Background (0) + 5 PanNuke cell categories (1-5)
@@ -100,6 +101,7 @@ def main():
         head_lr=args.head_lr,
         output_dir=str(save_dir),
         task_name="segmentation",
+        device=device,
     )
     trainer._num_classes = num_classes
 
