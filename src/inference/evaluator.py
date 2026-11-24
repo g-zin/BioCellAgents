@@ -7,9 +7,10 @@ Provides unified evaluation for all 3 model types:
 
 Includes cross-validation support and detailed report generation.
 """
+
 import json
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional
 
 import numpy as np
 import torch
@@ -37,12 +38,15 @@ def evaluate_classification(
         Dict with accuracy, macro_f1, per_class metrics, confusion_matrix.
     """
     from sklearn.metrics import (
-        accuracy_score, f1_score,
-        precision_recall_fscore_support, confusion_matrix,
+        accuracy_score,
+        confusion_matrix,
+        f1_score,
+        precision_recall_fscore_support,
     )
 
     model.eval()
-    all_preds, all_targets = [], []
+    all_preds: List[Any] = []
+    all_targets: List[Any] = []
 
     for images, labels in tqdm(dataloader, desc="Evaluating Classification"):
         images, labels = images.to(device), labels.to(device)
@@ -52,8 +56,22 @@ def evaluate_classification(
         all_targets.extend(labels.cpu().numpy())
 
     labels_list = list(range(len(class_names)))
+    if not all_targets:
+        per_class = {
+            name: {"precision": 0.0, "recall": 0.0, "f1": 0.0, "support": 0} for name in class_names
+        }
+        return {
+            "accuracy": 0.0,
+            "macro_f1": 0.0,
+            "per_class": per_class,
+            "confusion_matrix": [[0 for _ in labels_list] for _ in labels_list],
+            "num_samples": 0,
+        }
+
     acc = accuracy_score(all_targets, all_preds)
-    macro_f1 = f1_score(all_targets, all_preds, average="macro", zero_division=0)
+    macro_f1 = f1_score(
+        all_targets, all_preds, labels=labels_list, average="macro", zero_division=0
+    )
     precision, recall, f1, _ = precision_recall_fscore_support(
         all_targets, all_preds, labels=labels_list, zero_division=0
     )
@@ -102,7 +120,8 @@ def evaluate_segmentation(
         Dict with dice, iou, per_class_dice, per_class_iou, num_samples.
     """
     model.eval()
-    all_preds, all_targets = [], []
+    all_preds_list: List[torch.Tensor] = []
+    all_targets_list: List[torch.Tensor] = []
     total_batch_dice = 0.0
     total_batches = 0
 
@@ -115,8 +134,8 @@ def evaluate_segmentation(
         # Per-batch mean Dice (canonical metric, matches evaluate.py)
         batch_dice = 0.0
         for c in range(num_classes):
-            pred_c = (preds == c)
-            target_c = (masks == c)
+            pred_c = preds == c
+            target_c = masks == c
             inter = (pred_c & target_c).sum().float()
             union = pred_c.sum().float() + target_c.sum().float()
             if union > 0:
@@ -124,11 +143,20 @@ def evaluate_segmentation(
         total_batch_dice += batch_dice / num_classes
         total_batches += 1
 
-        all_preds.append(preds)
-        all_targets.append(masks)
+        all_preds_list.append(preds)
+        all_targets_list.append(masks)
 
-    all_preds = torch.cat(all_preds, dim=0).numpy()
-    all_targets = torch.cat(all_targets, dim=0).numpy()
+    if not all_preds_list:
+        return {
+            "dice": 0.0,
+            "iou": 0.0,
+            "per_class_dice": [0.0] * num_classes,
+            "per_class_iou": [0.0] * num_classes,
+            "num_samples": 0,
+        }
+
+    all_preds = torch.cat(all_preds_list, dim=0).numpy()
+    all_targets = torch.cat(all_targets_list, dim=0).numpy()
 
     # Global per-class Dice/IoU (diagnostic breakdown)
     per_class_dice = []

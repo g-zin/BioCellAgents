@@ -1,7 +1,5 @@
-version: "3.9"
-
 services:
-  # Streamlit Web Application
+  # Streamlit Web Application (Clinical Dark Precision UI)
   biocell-app:
     build:
       context: .
@@ -13,6 +11,8 @@ services:
       - ./data:/app/data
       - ./checkpoints:/app/checkpoints
       - ./logs:/app/logs
+      - ./reports:/app/reports
+      - ./results:/app/results
     environment:
       - BIOMED_LOG_LEVEL=INFO
       - CUDA_VISIBLE_DEVICES=0
@@ -20,7 +20,9 @@ services:
       resources:
         reservations:
           devices:
-            - capabilities: [gpu]
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
     restart: unless-stopped
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8501/_stcore/health')"]
@@ -29,17 +31,19 @@ services:
       retries: 3
       start_period: 60s
 
-  # Training service (optional, for batch training jobs)
+  # Training service (optional, for GPU batch training jobs)
   biocell-trainer:
     build:
       context: .
       dockerfile: Dockerfile
     container_name: biocell-trainer
-    command: ["python", "main.py", "train", "--task", "segmentation"]
+    command: ["python", "-m", "src.models.train", "--train_fold", "1,2", "--val_fold", "3"]
     volumes:
       - ./data:/app/data
       - ./checkpoints:/app/checkpoints
       - ./logs:/app/logs
+      - ./reports:/app/reports
+      - ./results:/app/results
     environment:
       - BIOMED_LOG_LEVEL=DEBUG
       - CUDA_VISIBLE_DEVICES=0
@@ -47,11 +51,30 @@ services:
       resources:
         reservations:
           devices:
-            - capabilities: [gpu]
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
     restart: "no"
     profiles: ["training"]
 
-  # Ollama LLM service (for agent-based analysis)
+  # Dual-Layer Evaluation & Benchmark service
+  biocell-eval:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: biocell-eval
+    command: ["python", "scripts/run_evals.py", "--mode", "synthetic", "--output-dir", "results/evals", "--fail-on-error"]
+    volumes:
+      - ./data:/app/data
+      - ./checkpoints:/app/checkpoints
+      - ./reports:/app/reports
+      - ./results:/app/results
+    environment:
+      - BIOMED_LOG_LEVEL=INFO
+    restart: "no"
+    profiles: ["eval"]
+
+  # Ollama LLM service (for local agent-based synthesis)
   ollama:
     image: ollama/ollama:latest
     container_name: biocell-ollama
@@ -65,7 +88,9 @@ services:
       resources:
         reservations:
           devices:
-            - capabilities: [gpu]
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
     restart: unless-stopped
     profiles: ["agent"]
 

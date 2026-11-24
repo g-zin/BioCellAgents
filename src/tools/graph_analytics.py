@@ -1,31 +1,31 @@
-import os
 from pathlib import Path
-from typing import Dict, List, Any, Type, Tuple
-import numpy as np
-import networkx as nx
-from scipy.spatial import distance
-import matplotlib
-matplotlib.use("Agg")  # Non-interactive backend (thread-safe)
-import matplotlib.pyplot as plt
-from pydantic import BaseModel, Field
-from crewai.tools import BaseTool
+from typing import Any, Dict, List, Optional, Type
 
-from src.models.nuclei_segmenter import parse_fold_masks
-from src.models.cell_detector import TrainedCellDetector
+import matplotlib
+import networkx as nx
+import numpy as np
+from crewai.tools import BaseTool
+from pydantic import BaseModel, Field
+from scipy.spatial import distance
+
 from src.inference.validity_gate import ValidityGate
+from src.models.cell_detector import TrainedCellDetector
+from src.models.nuclei_segmenter import parse_fold_masks
+
+matplotlib.use("Agg")  # Non-interactive backend (thread-safe)
 
 # Standard PanNuke cell class visual color scheme
 CLASS_COLORS = {
-    "Neoplastic": "#E63946",    # Crimson Red
+    "Neoplastic": "#E63946",  # Crimson Red
     "Inflammatory": "#457B9D",  # Steel Blue
-    "Connective": "#2A9D8F",    # Teal
-    "Dead": "#2B2D42",          # Dark Slate
-    "Epithelial": "#F4A261",    # Orange
-    "Unknown": "#8D99AE"        # Gray
+    "Connective": "#2A9D8F",  # Teal
+    "Dead": "#2B2D42",  # Dark Slate
+    "Epithelial": "#F4A261",  # Orange
+    "Unknown": "#8D99AE",  # Gray
 }
 
 
-def load_he_patch(fold_dir: str, patch_index: int) -> np.ndarray:
+def load_he_patch(fold_dir: str, patch_index: int) -> Optional[np.ndarray]:
     """Loads a single H&E image patch (256x256x3) from images.npy in memory-map mode."""
     images_path = Path(fold_dir) / "images.npy"
     if not images_path.exists():
@@ -60,8 +60,8 @@ class SpatialGraphAnalytics:
         """Calculates pairwise edge counts between different cell classes."""
         interactions: Dict[str, int] = {}
         for u, v in G.edges():
-            c1 = G.nodes[u].get("cell_class", "Unknown")
-            c2 = G.nodes[v].get("cell_class", "Unknown")
+            c1 = str(G.nodes[u].get("cell_class") or "Unknown")
+            c2 = str(G.nodes[v].get("cell_class") or "Unknown")
 
             # Alphabetically sort pair key to ensure undirected graph consistency
             pair = tuple(sorted([c1, c2]))
@@ -73,18 +73,22 @@ class SpatialGraphAnalytics:
     def compute_immune_infiltration_metrics(self, G: nx.Graph) -> Dict[str, float]:
         """Calculates mean & min Euclidean distance (px) from Inflammatory cells to nearest Neoplastic cell."""
         neoplastic_nodes = [n for n, d in G.nodes(data=True) if d.get("cell_class") == "Neoplastic"]
-        inflammatory_nodes = [n for n, d in G.nodes(data=True) if d.get("cell_class") == "Inflammatory"]
+        inflammatory_nodes = [
+            n for n, d in G.nodes(data=True) if d.get("cell_class") == "Inflammatory"
+        ]
 
         if not neoplastic_nodes or not inflammatory_nodes:
             return {
                 "mean_immune_to_tumor_dist_px": 0.0,
                 "closest_immune_to_tumor_dist_px": 0.0,
                 "inflammatory_count": len(inflammatory_nodes),
-                "neoplastic_count": len(neoplastic_nodes)
+                "neoplastic_count": len(neoplastic_nodes),
             }
 
-        neoplastic_coords = np.array([G.nodes[n]["pos"] for n in neoplastic_nodes], dtype=np.float64)
-        
+        neoplastic_coords = np.array(
+            [G.nodes[n]["pos"] for n in neoplastic_nodes], dtype=np.float64
+        )
+
         min_distances = []
         for inf in inflammatory_nodes:
             inf_pos = np.array(G.nodes[inf]["pos"], dtype=np.float64)
@@ -95,17 +99,19 @@ class SpatialGraphAnalytics:
             "mean_immune_to_tumor_dist_px": round(float(np.mean(min_distances)), 2),
             "closest_immune_to_tumor_dist_px": round(float(np.min(min_distances)), 2),
             "inflammatory_count": len(inflammatory_nodes),
-            "neoplastic_count": len(neoplastic_nodes)
+            "neoplastic_count": len(neoplastic_nodes),
         }
 
     def _generate_and_save_plot(
         self,
         G: nx.Graph,
         patch_index: int,
-        he_image: np.ndarray = None,
-        output_dir: str = "reports"
+        he_image: Optional[np.ndarray] = None,
+        output_dir: str = "reports",
     ) -> str:
         """Generates and saves a 2D spatial cell proximity plot overlaid on the H&E tissue image."""
+        import matplotlib.pyplot as plt
+
         reports_path = Path(output_dir)
         reports_path.mkdir(parents=True, exist_ok=True)
 
@@ -122,7 +128,15 @@ class SpatialGraphAnalytics:
         for u, v in G.edges():
             x1, y1 = pos[u]
             x2, y2 = pos[v]
-            ax.plot([x1, x2], [y1, y2], color="#FFD166", linestyle="--", alpha=0.8, linewidth=1.2, zorder=1)
+            ax.plot(
+                [x1, x2],
+                [y1, y2],
+                color="#FFD166",
+                linestyle="--",
+                alpha=0.8,
+                linewidth=1.2,
+                zorder=1,
+            )
 
         # 3. Group node coordinates by cell class
         grouped_coords: Dict[str, List[tuple]] = {}
@@ -135,29 +149,37 @@ class SpatialGraphAnalytics:
             ys = [pt[1] for pt in coords]
             color = CLASS_COLORS.get(cls_name, "#8D99AE")
             ax.scatter(
-                xs, ys,
+                xs,
+                ys,
                 c=color,
                 label=f"{cls_name} (n={len(coords)})",
                 s=85,
                 edgecolors="white",
                 linewidths=0.8,
-                zorder=2
+                zorder=2,
             )
 
         # 5. Format axes
-        title_text = f"2D Proximity Graph over H&E Stain (Patch {patch_index})" if he_image is not None else f"2D Cell Proximity Graph (Patch {patch_index})"
+        title_text = (
+            f"2D Proximity Graph over H&E Stain (Patch {patch_index})"
+            if he_image is not None
+            else f"2D Cell Proximity Graph (Patch {patch_index})"
+        )
         ax.set_title(title_text, fontsize=11, fontweight="bold")
         ax.set_xlabel("X (pixels)")
         ax.set_ylabel("Y (pixels)")
         ax.set_xlim(0, 256)
         ax.set_ylim(256, 0)  # Invert Y to match image space where (0,0) is top-left
-        
+
         if he_image is not None:
             ax.grid(False)
         else:
             ax.grid(True, linestyle=":", alpha=0.4)
 
-        ax.legend(loc="upper right", frameon=True, facecolor="white", framealpha=0.85, fontsize=8)
+        if grouped_coords:
+            ax.legend(
+                loc="upper right", frameon=True, facecolor="white", framealpha=0.85, fontsize=8
+            )
 
         img_filename = f"spatial_graph_patch_{patch_index}.png"
         img_filepath = reports_path / img_filename
@@ -171,40 +193,73 @@ class SpatialGraphAnalytics:
         self,
         centroids: List[Dict[str, Any]],
         patch_index: int = 0,
-        he_image: np.ndarray = None
+        he_image: Optional[np.ndarray] = None,
     ) -> Dict[str, Any]:
         num_cells = len(centroids)
 
-        if num_cells < 2:
-            image_path = self._generate_and_save_plot(nx.Graph(), patch_index=patch_index, he_image=he_image)
+        if num_cells == 0:
+            image_path = self._generate_and_save_plot(
+                nx.Graph(), patch_index=patch_index, he_image=he_image
+            )
             return {
-                "total_nodes": num_cells,
+                "total_nodes": 0,
                 "total_edges": 0,
                 "avg_clustering_coefficient": 0.0,
                 "avg_neighbor_distance_px": 0.0,
                 "cellular_density_per_100x100px": 0.0,
-                "connected_components": num_cells,
+                "connected_components": 0,
                 "interaction_matrix": {},
                 "immune_infiltration": {
                     "mean_immune_to_tumor_dist_px": 0.0,
                     "closest_immune_to_tumor_dist_px": 0.0,
                     "inflammatory_count": 0,
-                    "neoplastic_count": 0
+                    "neoplastic_count": 0,
                 },
                 "graph_image_path": image_path,
-                "status": "Insufficient centroids for spatial graph construction"
+                "status": "Insufficient centroids for spatial graph construction",
             }
 
         G = nx.Graph()
 
-        # Populate nodes with cell attributes
-        for cell in centroids:
+        # Populate nodes with unique internal keys to avoid overwrites/self-loops on duplicate IDs
+        node_keys: List[Any] = []
+        seen_keys: set[Any] = set()
+        for idx, cell in enumerate(centroids):
+            raw_id = cell.get("id", idx)
+            node_key: Any = raw_id
+            if node_key in seen_keys:
+                node_key = (raw_id, idx)
+                while node_key in seen_keys:
+                    node_key = f"{raw_id}__{idx}_{len(seen_keys)}"
+            seen_keys.add(node_key)
+            node_keys.append(node_key)
+            cell_class = str(cell.get("class") or "Unknown")
             G.add_node(
-                cell["id"],
+                node_key,
+                cell_id=raw_id,
                 pos=(float(cell["x"]), float(cell["y"])),
-                cell_class=cell.get("class", "Unknown"),
-                area=cell.get("area_px", 0)
+                cell_class=cell_class,
+                area=cell.get("area_px", 0),
             )
+
+        patch_area_px = 256 * 256
+        cellular_density = round((num_cells / patch_area_px) * 10000, 2)
+
+        if num_cells == 1:
+            immune_infiltration = self.compute_immune_infiltration_metrics(G)
+            image_path = self._generate_and_save_plot(G, patch_index=patch_index, he_image=he_image)
+            return {
+                "total_nodes": 1,
+                "total_edges": 0,
+                "avg_clustering_coefficient": 0.0,
+                "avg_neighbor_distance_px": 0.0,
+                "cellular_density_per_100x100px": cellular_density,
+                "connected_components": 1,
+                "interaction_matrix": {},
+                "immune_infiltration": immune_infiltration,
+                "graph_image_path": image_path,
+                "status": "Insufficient centroids for spatial graph construction",
+            }
 
         # Extract coordinates and enforce strictly (N, 2) array shape
         coords = np.array([[float(c["x"]), float(c["y"])] for c in centroids], dtype=np.float64)
@@ -222,7 +277,7 @@ class SpatialGraphAnalytics:
             for j in range(i + 1, num_cells):
                 d = dist_matrix[i, j]
                 if d <= self.max_distance_px:
-                    G.add_edge(centroids[i]["id"], centroids[j]["id"], weight=round(float(d), 2))
+                    G.add_edge(node_keys[i], node_keys[j], weight=round(float(d), 2))
 
         # Calculate standard topology metrics
         total_edges = G.number_of_edges()
@@ -252,17 +307,25 @@ class SpatialGraphAnalytics:
             "interaction_matrix": interaction_matrix,
             "immune_infiltration": immune_infiltration,
             "graph_image_path": image_path,
-            "status": "Graph analytics completed successfully"
+            "status": "Graph analytics completed successfully",
         }
 
 
 # --- CrewAI Tool Wrapper ---
 
+
 class SpatialGraphInput(BaseModel):
     """Input parameters for Spatial Graph Analytics Tool."""
-    fold_dir: str = Field(default="data/raw/fold1", description="Directory path containing masks.npy and images.npy")
-    patch_index: int = Field(default=0, description="Index of the tissue patch mask to construct spatial graph")
-    max_distance_px: float = Field(default=50.0, description="Proximity threshold in pixels for graph edge creation")
+
+    fold_dir: str = Field(
+        default="data/raw/fold1", description="Directory path containing masks.npy and images.npy"
+    )
+    patch_index: int = Field(
+        default=0, description="Index of the tissue patch mask to construct spatial graph"
+    )
+    max_distance_px: float = Field(
+        default=50.0, description="Proximity threshold in pixels for graph edge creation"
+    )
 
 
 class CellGraphAnalyticsTool(BaseTool):
@@ -274,10 +337,14 @@ class CellGraphAnalyticsTool(BaseTool):
     )
     args_schema: Type[BaseModel] = SpatialGraphInput
 
-    def _run(self, fold_dir: str = "data/raw/fold1", patch_index: int = 0, max_distance_px: float = 50.0) -> Dict[str, Any]:
+    def _run(
+        self, fold_dir: str = "data/raw/fold1", patch_index: int = 0, max_distance_px: float = 50.0
+    ) -> Dict[str, Any]:
         he_image = load_he_patch(fold_dir=fold_dir, patch_index=patch_index)
         if he_image is None:
-            return {"error": f"Could not load image patch from '{fold_dir}' at index {patch_index}."}
+            return {
+                "error": f"Could not load image patch from '{fold_dir}' at index {patch_index}."
+            }
 
         # Prefer model-driven cell detection + classification; fall back to ground-truth masks.
         detection_source = "Trained DINOv2 segmentation + classification"
@@ -298,9 +365,7 @@ class CellGraphAnalyticsTool(BaseTool):
 
         analyzer = SpatialGraphAnalytics(max_distance_px=max_distance_px)
         graph_metrics = analyzer.build_graph_and_compute_metrics(
-            centroids,
-            patch_index=patch_index,
-            he_image=he_image
+            centroids, patch_index=patch_index, he_image=he_image
         )
 
         # Apply statistical validity gate
@@ -328,7 +393,7 @@ if __name__ == "__main__":
         {"id": 1, "class": "Neoplastic", "x": 20.0, "y": 20.0, "area_px": 180},
         {"id": 2, "class": "Neoplastic", "x": 30.0, "y": 25.0, "area_px": 210},
         {"id": 3, "class": "Inflammatory", "x": 45.0, "y": 40.0, "area_px": 140},
-        {"id": 4, "class": "Inflammatory", "x": 180.0, "y": 180.0, "area_px": 130}
+        {"id": 4, "class": "Inflammatory", "x": 180.0, "y": 180.0, "area_px": 130},
     ]
     res = analyzer.build_graph_and_compute_metrics(mock_centroids, patch_index=0)
     print(f"  - Nodes: {res['total_nodes']} | Edges: {res['total_edges']}")

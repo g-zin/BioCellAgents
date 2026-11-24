@@ -1,6 +1,6 @@
 [build-system]
 requires = ["setuptools>=68.0", "wheel"]
-build-backend = "setuptools.backends._legacy:_Backend"
+build-backend = "setuptools.build_meta"
 
 [project]
 name = "biocell-agent"
@@ -10,6 +10,7 @@ readme = "README.md"
 requires-python = ">=3.10"
 license = {text = "MIT"}
 authors = [
+    {name = "Ghsoun Zin"},
     {name = "BioCellAgents Team"}
 ]
 keywords = ["biomedical", "cell-analysis", "segmentation", "classification", "deep-learning", "multi-agent"]
@@ -79,6 +80,7 @@ all = [
 biocell-train = "src.models.train:main"
 biocell-eval = "src.models.evaluate:main"
 biocell-infer = "src.models.inference_pipeline:main"
+biocell-eval-suite = "src.evals.runner:main"
 
 [tool.setuptools.packages.find]
 where = ["."]

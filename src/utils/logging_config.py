@@ -7,9 +7,9 @@ Provides structured logging with:
 - Inference-specific loggers with latency tracking
 - GPU memory monitoring
 """
+
 import json
 import logging
-import os
 import sys
 import time
 from datetime import datetime
@@ -71,6 +71,8 @@ def setup_logger(
     """Create and configure a logger with console + rotating file handlers."""
     logger = logging.getLogger(name)
     logger.setLevel(level)
+    for existing_handler in list(logger.handlers):
+        existing_handler.close()
     logger.handlers.clear()
 
     log_path = Path(log_dir)
@@ -96,13 +98,12 @@ def setup_logger(
     return logger
 
 
-def get_logger(name: str = "biocell") -> logging.Logger:
+def get_logger(name: str = "biocell", log_dir: str = "logs") -> logging.Logger:
     """Get an existing logger or create a default one."""
     logger = logging.getLogger(name)
     if not logger.handlers:
-        logger = setup_logger(name)
+        logger = setup_logger(name, log_dir=log_dir)
     return logger
-
 
 
 class TrainingLogger:
@@ -110,13 +111,14 @@ class TrainingLogger:
 
     def __init__(self, task_name: str = "training", log_dir: str = "logs"):
         self.task_name = task_name
-        self.logger = get_logger(f"biocell.{task_name}")
+        self.log_dir = log_dir
+        self.logger = setup_logger(f"biocell.{task_name}", log_dir=log_dir)
         self._epoch_start_time: Optional[float] = None
 
     def log_epoch_start(self, epoch: int, total_epochs: int) -> None:
         self._epoch_start_time = time.time()
         self.logger.info(
-            f"{'='*60}\nEpoch {epoch}/{total_epochs} [{self.task_name}]\n{'='*60}",
+            f"{'=' * 60}\nEpoch {epoch}/{total_epochs} [{self.task_name}]\n{'=' * 60}",
             extra={"epoch": epoch},
         )
 
@@ -127,8 +129,12 @@ class TrainingLogger:
         )
 
     def log_epoch_end(
-        self, epoch: int, train_loss: float, val_loss: float,
-        val_metric: float, metric_name: str = "dice",
+        self,
+        epoch: int,
+        train_loss: float,
+        val_loss: float,
+        val_metric: float,
+        metric_name: str = "dice",
     ) -> None:
         elapsed = time.time() - self._epoch_start_time if self._epoch_start_time else 0
         self.logger.info(
@@ -154,7 +160,8 @@ class InferenceLogger:
 
     def __init__(self, model_name: str = "inference", log_dir: str = "logs"):
         self.model_name = model_name
-        self.logger = get_logger(f"biocell.{model_name}")
+        self.log_dir = log_dir
+        self.logger = setup_logger(f"biocell.{model_name}", log_dir=log_dir)
 
     def track(self, operation: str):
         """Context manager that tracks operation duration."""
@@ -195,6 +202,7 @@ def get_gpu_memory_info() -> dict:
     """Get current GPU memory usage (if CUDA available)."""
     try:
         import torch
+
         if torch.cuda.is_available():
             free, total = torch.cuda.mem_get_info()
             return {

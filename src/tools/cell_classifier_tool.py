@@ -1,16 +1,19 @@
 # src/tools/cell_classifier_tool.py
 import os
-import numpy as np
-from typing import Type, Dict, Any
-from pydantic import BaseModel, Field
-from crewai.tools import BaseTool
+from typing import Any, Dict, Type
 
-from src.models.cell_detector import TrainedCellDetector
+import numpy as np
+from crewai.tools import BaseTool
+from pydantic import BaseModel, Field
+
 from src.inference.validity_gate import ValidityGate
+from src.models.cell_detector import TrainedCellDetector
 
 
 class CellClassifierInput(BaseModel):
-    fold_dir: str = Field(..., description="Path to fold directory containing images.npy (and optional masks.npy)")
+    fold_dir: str = Field(
+        ..., description="Path to fold directory containing images.npy (and optional masks.npy)"
+    )
     patch_index: int = Field(0, description="Index of the image patch to analyze")
 
 

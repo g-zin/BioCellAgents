@@ -8,33 +8,49 @@ The two-stage pipeline:
   1. DINOv2CellSegmenter  -> per-pixel class map -> connected components -> centroids
   2. DINOv2CellClassifier -> per-cell type (Neoplastic / Inflammatory / ...)
 """
+
 import os
-
-os.environ["XFORMERS_DISABLED"] = "1"
-
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Union
 
 import numpy as np
 import torch
 from PIL import Image
 
 from src.data.dataset import CELL_TYPES
+from src.inference.calibration import TemperatureScaler
 from src.models.dino_classifier import DINOv2CellClassifier, DINOv2CellSegmenter
 from src.models.inference_pipeline import TwoStageCellAnalyzer
-from src.inference.calibration import TemperatureScaler
+from src.utils.device import get_device, load_checkpoint_safe
+
+os.environ["XFORMERS_DISABLED"] = "1"
 
 
 def to_uint8_rgb(image: np.ndarray) -> np.ndarray:
     """Convert an image patch to a uint8 RGB array (H x W x 3)."""
-    if image.dtype != np.uint8:
-        if image.max() <= 1.0:
-            image = (image * 255).astype(np.uint8)
+    arr = np.asarray(image)
+    if arr.ndim == 2:
+        arr = np.stack([arr] * 3, axis=-1)
+    elif arr.ndim == 3 and arr.shape[2] == 1:
+        arr = np.repeat(arr, 3, axis=-1)
+    elif arr.ndim == 3 and arr.shape[2] == 2:
+        arr = np.repeat(arr[:, :, :1], 3, axis=-1)
+    elif arr.ndim == 3 and arr.shape[2] >= 4:
+        arr = arr[:, :, :3]
+
+    if arr.dtype != np.uint8:
+        if arr.size == 0:
+            arr = arr.astype(np.uint8)
+        elif np.issubdtype(arr.dtype, np.floating):
+            arr = np.nan_to_num(arr, nan=0.0, posinf=255.0, neginf=0.0)
+            max_val = float(np.max(arr))
+            if max_val <= 1.0:
+                arr = (np.clip(arr, 0.0, 1.0) * 255.0).astype(np.uint8)
+            else:
+                arr = np.clip(arr, 0.0, 255.0).astype(np.uint8)
         else:
-            image = image.astype(np.uint8)
-    if image.ndim == 2:
-        image = np.stack([image] * 3, axis=-1)
-    return image
+            arr = np.clip(arr, 0, 255).astype(np.uint8)
+    return arr
 
 
 class TrainedCellDetector:
@@ -48,19 +64,20 @@ class TrainedCellDetector:
         model_size: str = "vits14",
         segmenter_ckpt: str = "checkpoints/segmentation_vits14/best_segmentation_model.pt",
         classifier_ckpt: str = "checkpoints/cell_vits14/best_model.pt",
-        device: Optional[str] = None,
+        device: Optional[Union[str, torch.device]] = None,
     ):
         self.model_size = model_size
         self.segmenter_ckpt = segmenter_ckpt
         self.classifier_ckpt = classifier_ckpt
-        self.device = torch.device(device if device else ("cuda" if torch.cuda.is_available() else "cpu"))
+        self.device = get_device(device)
         self._analyzer: Optional[TwoStageCellAnalyzer] = None
 
     def _load_weights(self, model, checkpoint_path: str):
-        if not checkpoint_path or not Path(checkpoint_path).exists():
+        if not checkpoint_path or not Path(checkpoint_path).is_file():
             raise FileNotFoundError(f"Checkpoint not found: {checkpoint_path}")
-        checkpoint = torch.load(checkpoint_path, map_location=self.device, weights_only=False)
-        state_dict = checkpoint.get("model_state_dict", checkpoint) if isinstance(checkpoint, dict) else checkpoint
+        state_dict = load_checkpoint_safe(
+            checkpoint_path, map_location=self.device, extract_state_dict=True
+        )
         model.load_state_dict(state_dict)
         return model
 
@@ -88,12 +105,16 @@ class TrainedCellDetector:
         calibration_scaler = TemperatureScaler.load(cal_path)
 
         self._analyzer = TwoStageCellAnalyzer(
-            segmenter, classifier, device=str(self.device),
+            segmenter,
+            classifier,
+            device=str(self.device),
             calibration_scaler=calibration_scaler,
         )
         return self._analyzer
 
-    def detect_and_classify(self, image: np.ndarray, padding: int = 10) -> tuple[List[Dict[str, Any]], np.ndarray]:
+    def detect_and_classify(
+        self, image: np.ndarray, padding: int = 10
+    ) -> tuple[List[Dict[str, Any]], np.ndarray]:
         """Detect + classify cells in an image patch.
 
         Args:
@@ -115,13 +136,15 @@ class TrainedCellDetector:
         centroids = []
         for i, cell in enumerate(detected_cells, 1):
             cx, cy = cell["centroid"]
-            centroids.append({
-                "id": cell.get("cell_id", i),
-                "y": float(cy),
-                "x": float(cx),
-                "class": cell.get("class_name", "Unknown"),
-                "area_px": -1,
-            })
+            centroids.append(
+                {
+                    "id": cell.get("cell_id", i),
+                    "y": float(cy),
+                    "x": float(cx),
+                    "class": cell.get("class_name", "Unknown"),
+                    "area_px": -1,
+                }
+            )
         return centroids
 
     def class_counts(self, detected_cells: List[Dict[str, Any]]) -> Dict[str, int]:

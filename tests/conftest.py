@@ -1,4 +1,5 @@
 """Pytest configuration for BioCellAgents tests."""
+
 import sys
 from pathlib import Path
 
