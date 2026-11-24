@@ -299,9 +299,12 @@ def test_biocell_app_main_renders_real_graph_metrics_and_grayscale_overlay(monke
 
 def test_streamlit_apptest_headless_boot():
     """Headless Streamlit AppTest smoke test verifies zero uncaught exceptions on app startup."""
+    from pathlib import Path
+
     from streamlit.testing.v1 import AppTest
 
-    at = AppTest.from_file("app.py", default_timeout=20)
+    app_path = Path(__file__).resolve().parents[1] / "app.py"
+    at = AppTest.from_file(str(app_path), default_timeout=20)
     at.run()
     assert not at.exception, f"AppTest raised exception: {at.exception}"
     assert len(at.tabs) == 4

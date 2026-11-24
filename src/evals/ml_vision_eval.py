@@ -269,13 +269,23 @@ def _eval_synthetic_spatial_and_validity(tmp_reports_dir: Optional[Path] = None)
     gate = ValidityGate(min_total_cells=30, min_per_class=5)
     v_zero = gate.full_assessment(n_cells=0, counts_by_class={})
     v_29 = gate.full_assessment(n_cells=29, counts_by_class={"Neoplastic": 20, "Inflammatory": 9})
-    v_30 = gate.full_assessment(
+    v_30_low_cls = gate.full_assessment(
         n_cells=30,
         counts_by_class={
             "Neoplastic": 10,
             "Inflammatory": 6,
             "Connective": 6,
             "Dead": 3,
+            "Epithelial": 5,
+        },
+    )
+    v_balanced = gate.full_assessment(
+        n_cells=32,
+        counts_by_class={
+            "Neoplastic": 10,
+            "Inflammatory": 6,
+            "Connective": 6,
+            "Dead": 5,
             "Epithelial": 5,
         },
     )
@@ -291,8 +301,10 @@ def _eval_synthetic_spatial_and_validity(tmp_reports_dir: Optional[Path] = None)
         and p_des == "Immune-Desert"
         and (v_zero["is_valid"] is False)
         and (v_29["is_valid"] is False)
-        and (v_30["is_valid"] is True)
-        and len(v_30["warnings"]) >= 1
+        and (v_30_low_cls["is_valid"] is False)
+        and len(v_30_low_cls["warnings"]) >= 1
+        and (v_balanced["is_valid"] is True)
+        and len(v_balanced["warnings"]) == 0
     )
 
     return {
@@ -309,7 +321,10 @@ def _eval_synthetic_spatial_and_validity(tmp_reports_dir: Optional[Path] = None)
         "validity_gate_checks": {
             "n_0_invalid": not v_zero["is_valid"],
             "n_29_invalid": not v_29["is_valid"],
-            "n_30_valid_with_low_class_warning": bool(v_30["is_valid"] and v_30["warnings"]),
+            "n_30_low_class_warned": bool(
+                (not v_30_low_cls["is_valid"]) and v_30_low_cls["warnings"]
+            ),
+            "n_32_balanced_valid": bool(v_balanced["is_valid"] and not v_balanced["warnings"]),
         },
     }
 

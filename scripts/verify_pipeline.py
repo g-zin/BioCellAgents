@@ -70,8 +70,9 @@ def build_arg_parser() -> argparse.ArgumentParser:
 def test_pipeline(offline: bool = False, preferred_device: str | None = None) -> bool:
     device = get_device(preferred_device)
     hw = get_hardware_info()
-    print(f"BioCellAgents Verification | Device: {device} | Hardware: {hw['device_name']}")
-    print(f"PyTorch: {hw['pytorch_version']} | CUDA available: {hw['cuda_available']}\n")
+    hw_label = hw.get("gpu_name") or hw.get("device", str(device))
+    print(f"BioCellAgents Verification | Device: {device} | Hardware: {hw_label}")
+    print(f"PyTorch: {hw.get('torch_version', 'N/A')} | CUDA available: {hw['cuda_available']}\n")
 
     # 1. Single-Cell Classifier
     print("1. Testing DINOv2CellClassifier...")

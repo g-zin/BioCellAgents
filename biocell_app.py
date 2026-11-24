@@ -338,12 +338,13 @@ def render_metric_card(label: str, value: str, sub: str = "") -> None:
 def render_hardware_badge() -> None:
     hw = get_hardware_info()
     if hw.get("cuda_available"):
-        vram = hw.get("cuda_vram_total_gb")
+        vram = hw.get("vram_total_gb")
         vram_txt = f" · {vram:.1f} GB VRAM" if vram else ""
-        text = f"⚡ GPU: {hw['device_name']}{vram_txt}"
+        gpu_label = hw.get("gpu_name") or hw.get("device", "CUDA GPU")
+        text = f"⚡ GPU: {gpu_label}{vram_txt}"
         cls = "hw-badge hw-badge-gpu"
     else:
-        text = f"🖥️ CPU Mode · PyTorch {hw.get('pytorch_version', 'N/A')}"
+        text = f"🖥️ CPU Mode · PyTorch {hw.get('torch_version', 'N/A')}"
         cls = "hw-badge hw-badge-cpu"
     st.markdown(f'<div class="{cls}">{text}</div>', unsafe_allow_html=True)
 
