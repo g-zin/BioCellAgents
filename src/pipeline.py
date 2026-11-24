@@ -183,7 +183,7 @@ def run_organ_classification(
         "temperature": round(float(scaler.temperature), 4),
         "calibration_status": {
             "temperature": round(float(scaler.temperature), 4),
-            "fitted": bool(getattr(scaler, "is_fitted", False)),
+            "fitted": bool(getattr(scaler, "fitted", False)),
             "method": "temperature_scaling",
             "ece": getattr(scaler, "ece", None),
         },
