@@ -80,6 +80,7 @@ all = [
 biocell-train = "src.models.train:main"
 biocell-eval = "src.models.evaluate:main"
 biocell-infer = "src.models.inference_pipeline:main"
+biocell-eval-suite = "src.evals.runner:main"
 
 [tool.setuptools.packages.find]
 where = ["."]

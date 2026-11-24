@@ -1,6 +1,13 @@
-# BioCellAgents - Multi-stage Docker build
+# BioCellAgents - Multi-stage Docker build (GPU-ready & CPU CI configurable)
+# Examples:
+#   Standard CUDA build : docker build -t biocell-agent:latest .
+#   RTX 50-series cu128 : docker build --build-arg TORCH_INDEX_URL=https://download.pytorch.org/whl/cu128 -t biocell-agent:cu128 .
+#   Fast CPU CI build   : docker build --build-arg TORCH_INDEX_URL=https://download.pytorch.org/whl/cpu -t biocell-agent:cpu .
+
 # Stage 1: Build & install dependencies
 FROM python:3.11-slim AS builder
+
+ARG TORCH_INDEX_URL=""
 
 WORKDIR /app
 
@@ -10,9 +17,12 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     g++ \
     && rm -rf /var/lib/apt/lists/*
 
-# Install Python dependencies
+# Install Python dependencies (optional custom PyTorch index for CPU CI or cu128)
 COPY requirements.txt .
-RUN pip install --no-cache-dir --prefix=/install -r requirements.txt
+RUN if [ -n "$TORCH_INDEX_URL" ]; then \
+        pip install --no-cache-dir --prefix=/install torch torchvision --index-url "$TORCH_INDEX_URL"; \
+    fi \
+    && pip install --no-cache-dir --prefix=/install -r requirements.txt
 
 # Stage 2: Runtime
 FROM python:3.11-slim AS runtime
@@ -30,14 +40,15 @@ COPY --from=builder /install /usr/local
 
 # Create non-root user and writable app directories
 RUN useradd -m -r biocell \
-    && mkdir -p /app/logs /app/checkpoints /app/data /app/reports \
+    && mkdir -p /app/logs /app/checkpoints /app/data /app/reports /app/results \
     && chown -R biocell:biocell /app
 
-# Copy application code
+# Copy application code & CLI scripts
 COPY --chown=biocell:biocell src/ src/
+COPY --chown=biocell:biocell scripts/ scripts/
 COPY --chown=biocell:biocell config/ config/
 COPY --chown=biocell:biocell .streamlit/ .streamlit/
-COPY --chown=biocell:biocell main.py app.py biocell_app.py ./
+COPY --chown=biocell:biocell pyproject.toml main.py app.py biocell_app.py ./
 
 USER biocell
 

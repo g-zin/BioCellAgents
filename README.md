@@ -1,6 +1,6 @@
 # BioCellAgents
 
-> **AI-Powered Computational Pathology & Multi-Agent Spatial Biology Platform**
+> **AI-Powered Computational Pathology, Spatial Biology & Tool-Using Multi-Agent Platform**
 
 By **Ghsoun Zin** · [GitHub](https://github.com/g-zin) · [LinkedIn](https://www.linkedin.com/in/ghsoun-zin)
 
@@ -8,33 +8,37 @@ By **Ghsoun Zin** · [GitHub](https://github.com/g-zin) · [LinkedIn](https://ww
 
 ## What
 
-**BioCellAgents** is an end-to-end computational pathology system that turns raw PanNuke H&E tissue patches (`256x256`) into calibrated organ predictions, 5-class cellular spatial graphs, statistical validity audits, and literature-grounded Research-Use-Only (RUO) pathology reports.
+**BioCellAgents** is an end-to-end, GPU-accelerated computational pathology platform that transforms PanNuke H&E tissue patches (`256x256`) or custom uploaded histopathology tiles into calibrated multi-organ predictions, 5-class cellular spatial graphs, statistical validity audits, and verified Research-Use-Only (RUO) pathology reports.
 
 It combines:
-- **Deep Learning Vision Models**: **EfficientNet-B0** (19-class PanNuke organ classifier), **DINOv2 ViT-S/14** (5-class single-cell classifier and patch segmenter), and **DeepLabV3+ (ResNet50 + ASPP)** dense semantic segmenter.
-- **Confidence Calibration & Validity Gating**: L-BFGS **Temperature Scaling** (`TemperatureScaler`, default $\tau = 2.0$) and minimum-sample **Statistical Validity Gate** (`ValidityGate`, $N \ge 30$ total cells, $N \ge 5$ per class).
-- **Spatial TME Topology Engine**: **NetworkX** proximity graphs (`SpatialGraphAnalytics`) computing interaction matrices, clustering coefficients, cellular density, and immune-to-tumor Euclidean infiltration distances.
-- **Grounded Multi-Agent Synthesis**: **PubMed & Europe PMC** pre-retrieval (`LiteratureSearchTool`) feeding a 4-agent **CrewAI** sequential crew (`PathologyCrew` with `GroqCompatibleLLM`) that produces an 11-section RUO Markdown report and powers an interactive **Streamlit** dashboard (`app.py` / `biocell_app.py`).
+- **GPU-First Deep Learning Vision Models**: **EfficientNet-B0** (19-class PanNuke organ classifier), **DINOv2 ViT-S/14** (5-class single-cell classifier & semantic segmenter), **DeepLabV3+ (ResNet50 + ASPP)** segmenter, and **Cellpose-SAM v2** zero-shot instance adapter — unified through centralized device, AMP, and PyTorch 2.7+ safe checkpoint utilities (`src/utils/device.py`).
+- **Confidence Calibration & Validity Gating**: L-BFGS **Temperature Scaling** (`TemperatureScaler` + `compute_ece`) and minimum-sample **Statistical Validity Gate** (`ValidityGate`, $N \ge 30$ total cells, $N \ge 5$ per class).
+- **Spatial TME Topology & Deterministic Reporting**: **NetworkX** proximity graphs (`SpatialGraphAnalytics`) + pure-Python deterministic extraction & Markdown/PDF table generation (`src/reporting.py`) with 0% numeric drift and an instant `--deterministic` zero-LLM mode.
+- **Genuinely Tool-Using 3-Agent Crew (`PathologyCrew`)**:
+  1. `literature_researcher` — wired with `LiteratureSearchTool` (PubMed + Europe PMC) for adaptive query refinement.
+  2. `clinical_report_writer` — synthesizes verified quantitative tables and curated literature into an 11-section RUO report.
+  3. `fidelity_auditor` — wired with `ReportFidelityVerifierTool` to programmatically score and audit numeric fidelity, 11-section structure, table formatting, Vancouver PMID grounding (zero fabricated PMIDs), and RUO compliance in a closed loop.
+- **Dual-Layer Automated Eval Harness (`src/evals/` & `scripts/run_evals.py`)**: Benchmarks ML/spatial vision (Dice, IoU, Panoptic Quality, Macro F1, ECE reduction, 3-state TME phenotyping, ValidityGate boundaries) and grades report fidelity across compliant & 5 adversarial hallucination probes.
+- **Clinical Dark Precision Dashboard (`app.py` / `biocell_app.py`)**: Dark-theme Streamlit platform with live GPU/CPU telemetry badge, multi-fold (`fold1`–`fold3`) + custom H&E upload, Okabe-Ito colorblind-safe palette toggle, interactive Plotly spatial maps, PDF/Markdown report export, grounded Q&A, and an integrated Eval Benchmark tab.
 
 ---
 
 ## Why
 
-Raw pathology vision models emit uncalibrated softmax probabilities and isolated pixel masks without spatial tissue context, sample-size safeguards, or peer-reviewed grounding. Conversely, letting LLM agents call vision/search tools freely risks fabricated metrics, ungrounded biological claims, and provider tool-calling failures (`cache_breakpoint` / `tool_use_failed`).
+Raw pathology vision models emit overconfident probabilities and pixel masks without spatial tissue context, sample-size safeguards, or peer-reviewed grounding. Conversely, forcing LLM agents to copy JSON numbers without real tools adds latency and hallucination risk.
 
-BioCellAgents solves this by **decoupling deterministic pre-computation (`src/pipeline.py`) from constrained multi-agent synthesis (`src/crew.py`)**:
-1. All quantitative vision, calibration, graph topology, and literature retrieval steps run deterministically before the crew starts.
-2. The 4-agent crew (`pathology_cv_analyst` → `spatial_bio_analyst` → `literature_researcher` → `clinical_report_writer`) operates strictly on the pre-computed JSON payload with verbatim numeric reporting rules and Vancouver PMID citations.
+BioCellAgents separates **what must be deterministic** from **where agentic reasoning adds real value**:
+1. **100% Deterministic Quantitative Pipeline (`src/pipeline.py` + `src/reporting.py`)**: Vision inference, temperature scaling, spatial graph metrics, `px` → `μm` (`0.25 μm/px`) conversion, and Markdown tables run strictly in Python with 0% hallucination.
+2. **Closed-Loop Tool-Using 3-Agent Synthesis (`src/crew.py`)**: Agents focus exclusively on adaptive PubMed/Europe PMC search, grounded translational narrative synthesis, and programmatic verification via `ReportFidelityVerifierTool`.
 
 ---
 
 ## Impact
 
-- **Reproducible Quantitative Payloads**: Produces structured JSON containing calibrated top-3 organ predictions, temperature $\tau$, 5-class cell counts, Voronoi class-specific segmentation overlays, NetworkX topology metrics, immune infiltration distances (in `px` and `µm` at 40x), validity warnings, and PubMed/Europe PMC citations.
-- **Interactive Clinical Research Explorer**: Dark-theme Streamlit dashboard (`app.py`) with H&E patch inspection, Plotly charts, class-colored Voronoi mask overlays, live 4-task CrewAI progress tracking, and **Chat with the Slide** grounded strictly in computed patch data.
-- **Reproducible Evaluation & Benchmarking**: Includes standalone scripts for held-out PanNuke `fold3` evaluation (`scripts/evaluate_all.py`), head-to-head 4-segmenter comparison (`scripts/benchmark_segmenters.py`), and confidence calibration fitting (`scripts/fit_calibration.py`).
+- **Zero-Drift Quantitative Reporting**: Deterministic table scaffolding + a 100-point 6-rubric programmatic fidelity grader catches 100% of tested adversarial failure modes (altered cell counts, fabricated PMIDs, non-PanNuke cell classes, diagnostic language, missing sections).
+- **GPU-Accelerated & CI-Reproducible**: Automatic `cuda` → `mps` → `cpu` selection, FP16 AMP, `pin_memory`, and PyTorch 2.7+ safe checkpoint loading ensure seamless execution on NVIDIA GPUs (including RTX 50-series `cu128`) while every unit test, Streamlit `AppTest`, and synthetic dual-layer eval runs reproducibly on CPU in CI.
 
-> **Note on Artifacts:** PanNuke datasets (`data/`), trained model weights (`checkpoints/`), evaluation outputs (`results/`), and generated reports (`reports/`) are gitignored and generated locally on your machine—no synthetic or hardcoded benchmark scores are committed to this repository.
+> **Note on Artifacts:** PanNuke datasets (`data/`), trained model weights (`checkpoints/`), evaluation outputs (`results/`), and generated reports (`reports/`) are gitignored and produced locally on your workstation.
 
 ---
 
@@ -43,105 +47,93 @@ BioCellAgents solves this by **decoupling deterministic pre-computation (`src/pi
 ### Architecture
 
 ```mermaid
-flowchart LR
-    A[PanNuke H&E Patch 256x256] --> B
-
-    subgraph B [src/pipeline.py: Deterministic CV + Spatial + Literature Engine]
-        B1[EfficientNet-B0 Organ Classifier<br/>19 Organs + TemperatureScaler]
-        B2[DINOv2 ViT-S/14 / DeepLabV3+<br/>5 Cell Types + Segmentation]
-        B3[SpatialGraphAnalytics NetworkX<br/>Interaction Matrix + Immune Distance]
-        B4[ValidityGate<br/>min_total=30, min_per_class=5]
-        B5[LiteratureSearchTool<br/>PubMed + Europe PMC]
-        B1 --> B4
-        B2 --> B3 --> B4
+flowchart TD
+    subgraph DET["Deterministic Python Pipeline (0% Hallucination)"]
+        IMG["H&E Tissue Patch (PanNuke fold1-3 / Custom Upload)"] --> VIS["Vision & Calibration (EfficientNet-B0 + DINOv2/DeepLabV3+ + Temp Scaling)"]
+        VIS --> SPA["Spatial TME & Validity Gate (NetworkX Graph + Immune Infiltration + N>=30)"]
+        SPA --> SCR["Canonical v2.0 Payload & Verified Tables (src/pipeline.py + src/reporting.py)"]
     end
 
-    B --> C[Precomputed JSON Payload]
-    C --> D
-
-    subgraph D [src/crew.py: PathologyCrew Sequential + GroqCompatibleLLM]
-        D1[pathology_cv_analyst] --> D2[spatial_bio_analyst]
-        D2 --> D3[literature_researcher]
-        D3 --> D4[clinical_report_writer]
+    subgraph AGT["Genuinely Agentic 3-Agent Crew (or --deterministic Offline Bypass)"]
+        SCR --> A1["1. literature_researcher (Tool: LiteratureSearchTool -> PubMed/Europe PMC)"]
+        A1 --> A2["2. clinical_report_writer (11-Section RUO Narrative + Verified Tables)"]
+        A2 --> A3["3. fidelity_auditor (Tool: ReportFidelityVerifierTool -> Audit & Fix)"]
     end
 
-    D --> E[11-Section RUO Report + Spatial PNG + Streamlit UI]
+    A3 --> OUT["Verified 11-Section RUO Report (Markdown / PDF / Streamlit UI)"]
+    SCR -. "--deterministic" .-> OUT
 ```
 
-### Quick Start
+### Quick Start (GPU & CPU)
 
 ```bash
-# 1. Clone & install
+# 1. Clone & create environment
 git clone https://github.com/g-zin/BioCellAgents.git
 cd BioCellAgents
 python -m venv .venv && source .venv/bin/activate   # Windows: .venv\Scripts\activate
+
+# 2a. Install PyTorch for NVIDIA RTX 50-series (Blackwell, CUDA 12.8)
+pip install torch torchvision --index-url https://download.pytorch.org/whl/cu128
+# 2b. Or standard CUDA / CPU install:
 pip install -e ".[dev]"
 
-# 2. Configure environment
-cp .env.example .env   # add your GROQ_API_KEY (and optional MODEL)
+# 3. Configure environment (optional for --deterministic offline mode)
+cp .env.example .env   # add GROQ_API_KEY (and optional MODEL)
 
-# 3. Prepare PanNuke data (see Data Setup below)
+# 4. Verify hardware & pipeline
+python scripts/verify_pipeline.py             # GPU/CPU pretrained verification
+python scripts/verify_pipeline.py --offline   # Zero-network verification
 
-# 4. Run CLI pipeline or Streamlit dashboard
-python main.py --fold_dir data/raw/fold1 --patch_index 0
+# 5. Launch Clinical Dark Precision Dashboard or CLI
 streamlit run app.py
-```
-
-**Prerequisites:** Python `>= 3.10` (tested on 3.10 & 3.11), CUDA 11.8+ (optional; CPU supported), and a Groq API key (only required for CrewAI synthesis and slide chat).
-
-### Data Setup
-
-Download the [PanNuke Challenge](https://pannuke.grand-challenge.org) dataset (`images.npy`, `masks.npy`, `tissues.npy`) and organize locally under `data/` (gitignored):
-
-```text
-data/
-├── raw/
-│   ├── fold1/          # images.npy, masks.npy, tissues.npy
-│   ├── fold2/
-│   └── fold3/          # held-out test fold
-└── processed/
-    ├── fold1/crops/
-    └── metadata.csv
+python main.py --fold_dir data/raw/fold3 --patch_index 0 --deterministic
 ```
 
 ### Usage & Commands
 
 | Task | Command |
 |---|---|
-| Web dashboard | `streamlit run app.py` |
-| Multi-agent CLI pipeline | `python main.py --fold_dir data/raw/fold1 --patch_index 0` |
-| Train cell segmenter | `python -m src.models.train --train_fold 1,2 --val_fold 3` |
-| Train cell classifier | `python -m src.models.train_classification --train_fold 1,2 --val_fold 3` |
-| Full 3-stage training | `python -m src.models.train_complete --train_fold 1,2 --val_fold 3` |
-| Single-image inference CLI | `biocell-infer --image path/to/patch.png` |
-| Fit temperature calibration (`fold3`) | `python scripts/fit_calibration.py` |
-| Evaluate all 3 models (`fold3`) | `python scripts/evaluate_all.py --tasks cell organ segmentation` |
-| Benchmark 4 segmenters (`fold3`) | `python scripts/benchmark_segmenters.py` |
-| Run offline unit tests | `pytest tests/ -v --tb=short --cov=src` |
-
-### PanNuke Evaluation & Benchmarking Workflow
-
-When PanNuke data and trained checkpoints are present locally:
-1. **Confidence Calibration (`scripts/fit_calibration.py`)**: Fits optimal `TemperatureScaler` temperature $\tau$ via L-BFGS minimizing NLL on held-out `fold3` and writes `checkpoints/organ_vits14/calibration.json`.
-2. **Independent 3-Task Harness (`scripts/evaluate_all.py`)**: Evaluates `DINOv2CellClassifier` (5 cell classes), `OrganClassifier` (19 PanNuke organs), and `DINOv2CellSegmenter` (6-class segmentation) on `fold3`, generating `results/eval_report.json`, `results/eval_report.md`, `confusion_cell.png`, `confusion_organ.png`, and `segmentation_samples/`.
-3. **4-Way Segmenter Benchmark (`scripts/benchmark_segmenters.py`)**: Compares fine-tuned `DINOv2CellSegmenter` and `DeepLabV3PlusSegmenter` against zero-shot `StarDist2D` (`2D_versatile_he`, install optional `pip install -e ".[segmentation-bench]"`) and `Cellpose` (`cpsam_v2`) on identical `fold3` patches, reporting Foreground Dice and per-class Dice to `results/segmentation_benchmark.json` and `reports/model_scorecard.md`.
+| Clinical Dark Precision Dashboard | `streamlit run app.py` |
+| 3-Agent CrewAI CLI (PanNuke fold) | `python main.py --fold_dir data/raw/fold3 --patch_index 0` |
+| Offline Deterministic 11-Sec Report | `python main.py --fold_dir data/raw/fold3 --patch_index 0 --deterministic` |
+| Analyze Custom H&E Image | `python main.py --image path/to/patch.png --deterministic` |
+| Dual-Layer Synthetic Eval Harness | `python scripts/run_evals.py --mode synthetic --fail-on-error` |
+| Dual-Layer Real GPU Eval Harness | `python scripts/run_evals.py --mode real --device cuda` |
+| Train Cell Segmenter | `python -m src.models.train --train_fold 1,2 --val_fold 3` |
+| Train Cell Classifier | `python -m src.models.train_classification --train_fold 1,2 --val_fold 3` |
+| Full 3-Stage Training | `python -m src.models.train_complete --train_fold 1,2 --val_fold 3` |
+| Fit Temperature Calibration | `python scripts/fit_calibration.py --fold fold2 --seed 42` |
+| Evaluate All 3 Models (`fold3`) | `python scripts/evaluate_all.py --tasks cell organ segmentation` |
+| Benchmark 4 Segmenters (`fold3`) | `python scripts/benchmark_segmenters.py --fold fold3` |
+| Full Test Suite + Coverage | `pytest tests/ -v --tb=short --cov=src` |
 
 ### Docker
 
 ```bash
-docker compose up -d biocell-app                           # Streamlit dashboard on :8501
-docker compose --profile training up -d                    # Batch segmentation trainer
-docker compose --profile training --profile agent up -d    # + local Ollama service
+# GPU-enabled Streamlit Dashboard (:8501)
+docker compose up -d biocell-app
+
+# Run Dual-Layer Synthetic Eval Gate in Docker
+docker compose --profile eval run --rm biocell-eval
+
+# GPU Batch Trainer & Local Ollama LLM
+docker compose --profile training up -d
+docker compose --profile agent up -d
+
+# Custom CPU-only or RTX 50-series cu128 Docker image builds
+docker build --build-arg TORCH_INDEX_URL=https://download.pytorch.org/whl/cpu -t biocell-agent:cpu .
+docker build --build-arg TORCH_INDEX_URL=https://download.pytorch.org/whl/cu128 -t biocell-agent:cu128 .
 ```
 
-### Development & Quality Checks
+### Quality Gates
 
 ```bash
-flake8 src/ tests/ app.py biocell_app.py main.py --max-line-length=120 --extend-ignore=E203,W503
-black --check src/ tests/ app.py biocell_app.py main.py
-isort --check-only src/ tests/ app.py biocell_app.py main.py
-mypy src/
+flake8 src/ scripts/ tests/ app.py biocell_app.py main.py --max-line-length=120 --extend-ignore=E203,W503
+black --check src/ scripts/ tests/ app.py biocell_app.py main.py
+isort --check-only src/ scripts/ tests/ app.py biocell_app.py main.py
+mypy --no-incremental src/ scripts/
 pytest tests/ -v --tb=short --cov=src
+python scripts/run_evals.py --mode synthetic --fail-on-error
 ```
 
 ### Project Structure
@@ -151,18 +143,20 @@ BioCellAgents/
 ├── src/
 │   ├── data/           # PanNuke constants, PyTorch datasets, image/label transforms
 │   ├── models/         # DINOv2 classifier/segmenter, DeepLabV3+, EfficientNet-B0, Cellpose, trainers
-│   ├── inference/      # TemperatureScaler, ValidityGate, Evaluator, Metrics, HyperparameterTuner
-│   ├── tools/          # SpatialGraphAnalytics, PanNukeParserTool, LiteratureSearchTool, CellTypeClassifierTool
-│   ├── dashboard/      # Reusable Plotly chart builders, cell explorer, styles
-│   ├── utils/          # Structured logging and metrics tracking
-│   ├── pipeline.py     # Deterministic pre-computation engine
-│   └── crew.py         # 4-agent CrewAI PathologyCrew + GroqCompatibleLLM
-├── config/             # agents.yaml & tasks.yaml
-├── scripts/            # fold3 evaluation, 4-segmenter benchmark, temperature calibration
-├── tests/              # Offline CPU unit tests
+│   ├── inference/      # TemperatureScaler, compute_ece, ValidityGate, Evaluator, Metrics, Tuner
+│   ├── evals/          # Dual-Layer Eval Harness (ml_vision_eval, report_fidelity_eval, runner)
+│   ├── tools/          # SpatialGraphAnalytics, LiteratureSearchTool, ReportFidelityVerifierTool, parsers
+│   ├── dashboard/      # Clinical Dark Precision CSS, Okabe-Ito palettes, Plotly charts, explorer
+│   ├── utils/          # GPU/CPU device & safe checkpoint utils, structured logging, metrics tracker
+│   ├── pipeline.py     # Canonical v2.0 deterministic vision + spatial pre-computation
+│   ├── reporting.py    # Deterministic 11-section RUO report engine + PDF/Markdown export
+│   └── crew.py         # Tool-using 3-agent PathologyCrew + GroqCompatibleLLM
+├── config/             # 3-agent agents.yaml & tasks.yaml
+├── scripts/            # run_evals, verify_pipeline, evaluate_all, benchmark_segmenters, fit_calibration, diag_dice
+├── tests/              # Comprehensive unit, integration, eval & Streamlit AppTest suites
 ├── app.py              # Streamlit entry point
-├── biocell_app.py      # Full Streamlit dashboard implementation
-├── main.py             # CLI multi-agent pipeline entry point
+├── biocell_app.py      # Clinical Dark Precision Streamlit application
+├── main.py             # CLI entry point (3-agent CrewAI & --deterministic modes)
 ├── Dockerfile
 ├── docker-compose.yml
 └── pyproject.toml
